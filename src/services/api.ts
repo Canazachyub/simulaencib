@@ -264,18 +264,21 @@ export interface AccessCheckResult {
   attemptCount: number;
   isFirstAttempt?: boolean;
   isConfirmed?: boolean;
+  isFraudAttempt?: boolean;
 }
 
 /**
- * Verifica si un usuario puede dar el examen
+ * Verifica si un usuario puede dar el examen con detección de fraude
  * - Primer examen: LIBRE
  * - Segundo+: Requiere estar en hoja "confirmado"
+ * - Detecta si el DNI/Email ya fueron usados con datos diferentes
  */
-export async function checkAccess(dni: string): Promise<AccessCheckResult> {
+export async function checkAccess(dni: string, email: string): Promise<AccessCheckResult> {
   try {
     const params = new URLSearchParams({
       action: 'checkAccess',
-      dni: dni
+      dni: dni,
+      email: email.toLowerCase().trim()
     });
 
     const url = `${API_BASE_URL}?${params.toString()}`;

@@ -78,10 +78,11 @@ function doGet(e) {
         break;
       case 'checkAccess':
         const accessDni = e.parameter.dni || '';
+        const accessEmail = e.parameter.email || '';
         if (!accessDni) {
           return createErrorResponse('Parámetro "dni" requerido');
         }
-        result = checkUserAccess(accessDni);
+        result = checkUserAccess(accessDni, accessEmail);
         break;
       case 'test':
         result = { status: 'ok', message: 'SimulaENCIB API funcionando correctamente', timestamp: new Date().toISOString() };
@@ -447,48 +448,122 @@ function testDoGet() {
 }
 
 // ============================================
-// VERIFICACIÓN DE ACCESO - HOJA "confirmado"
+// VERIFICACIÓN DE ACCESO - DETECCIÓN DE FRAUDE
 // ============================================
 
 /**
- * Verifica si un usuario puede dar el examen
+ * Verifica si un usuario puede dar el examen con detección de fraude
  * - Primer examen: LIBRE para todos
  * - Segundo examen en adelante: Solo si está en hoja "confirmado"
+ * - FRAUDE: Si el DNI o Email ya fueron usados con datos diferentes
  *
  * @param {string} dni - DNI del usuario
- * @returns {object} { canAccess: boolean, reason: string, attemptCount: number }
+ * @param {string} email - Email del usuario
+ * @returns {object} { canAccess: boolean, reason: string, attemptCount: number, isFraudAttempt: boolean }
  */
-function checkUserAccess(dni) {
+function checkUserAccess(dni, email) {
   if (!dni) {
     return { canAccess: false, reason: 'DNI requerido', attemptCount: 0 };
   }
 
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const emailLower = (email || '').toLowerCase().trim();
 
-  // 1. Contar intentos previos en historial_puntajes
-  const historySheet = ss.getSheetByName('historial_puntajes');
-  let attemptCount = 0;
+  // 1. Verificar en tabla "usuarios" si hay intento de fraude
+  const usersSheet = ss.getSheetByName('usuarios');
+  let fraudAttempt = false;
+  let fraudReason = '';
+  let existingUserDni = null;
+  let existingUserEmail = null;
 
-  if (historySheet) {
-    const historyData = historySheet.getDataRange().getValues();
-    for (let i = 1; i < historyData.length; i++) {
-      if (historyData[i][0] === dni || historyData[i][0] === parseInt(dni)) {
-        attemptCount++;
+  if (usersSheet) {
+    const usersData = usersSheet.getDataRange().getValues();
+    // Columnas: Fecha | DNI | Nombre | Email | Celular | Universidad
+
+    for (let i = 1; i < usersData.length; i++) {
+      const rowDni = String(usersData[i][1]).trim();
+      const rowEmail = String(usersData[i][3] || '').toLowerCase().trim();
+
+      // Verificar si el DNI ya existe con DIFERENTE email
+      if ((rowDni === dni || rowDni === String(parseInt(dni))) && rowEmail !== '' && emailLower !== '') {
+        if (rowEmail !== emailLower) {
+          fraudAttempt = true;
+          fraudReason = 'El usuario ya existe';
+          break;
+        }
+      }
+
+      // Verificar si el Email ya existe con DIFERENTE DNI
+      if (rowEmail !== '' && emailLower !== '' && rowEmail === emailLower) {
+        if (rowDni !== dni && rowDni !== String(parseInt(dni))) {
+          fraudAttempt = true;
+          fraudReason = 'El usuario ya existe';
+          break;
+        }
       }
     }
   }
 
-  // 2. Si es el primer intento, LIBRE
+  // 2. Contar intentos previos en historial_puntajes (por DNI O por Email)
+  const historySheet = ss.getSheetByName('historial_puntajes');
+  let attemptCountByDni = 0;
+  let attemptCountByEmail = 0;
+
+  if (historySheet && usersSheet) {
+    const historyData = historySheet.getDataRange().getValues();
+    const usersData = usersSheet.getDataRange().getValues();
+
+    // Crear mapa de DNI -> Email desde usuarios
+    const dniToEmail = {};
+    for (let i = 1; i < usersData.length; i++) {
+      const uDni = String(usersData[i][1]).trim();
+      const uEmail = String(usersData[i][3] || '').toLowerCase().trim();
+      if (uDni && uEmail) {
+        dniToEmail[uDni] = uEmail;
+      }
+    }
+
+    // Contar intentos por DNI
+    for (let i = 1; i < historyData.length; i++) {
+      const histDni = String(historyData[i][0]).trim();
+      if (histDni === dni || histDni === String(parseInt(dni))) {
+        attemptCountByDni++;
+      }
+      // También contar si el email asociado a ese DNI coincide con el email actual
+      if (emailLower !== '' && dniToEmail[histDni] === emailLower) {
+        attemptCountByEmail++;
+      }
+    }
+  }
+
+  // El conteo real es el máximo entre intentos por DNI y por Email
+  const attemptCount = Math.max(attemptCountByDni, attemptCountByEmail);
+
+  // 3. Si detectamos fraude, denegar acceso
+  if (fraudAttempt) {
+    return {
+      canAccess: false,
+      reason: fraudReason,
+      attemptCount: attemptCount,
+      isFirstAttempt: false,
+      isConfirmed: false,
+      isFraudAttempt: true
+    };
+  }
+
+  // 4. Si es el primer intento (no hay historial), LIBRE
   if (attemptCount === 0) {
     return {
       canAccess: true,
       reason: 'Primer examen gratuito',
       attemptCount: attemptCount,
-      isFirstAttempt: true
+      isFirstAttempt: true,
+      isFraudAttempt: false
     };
   }
 
-  // 3. Para segundo intento+, verificar si está en hoja "confirmado"
+  // 5. Para segundo intento+, verificar si está en hoja "confirmado"
+  // AMBOS: DNI Y Email deben coincidir
   let confirmadoSheet = ss.getSheetByName('confirmado');
 
   // Crear hoja si no existe (con encabezados)
@@ -505,7 +580,14 @@ function checkUserAccess(dni) {
   let isConfirmed = false;
 
   for (let i = 1; i < confirmadoData.length; i++) {
-    if (confirmadoData[i][0] === dni || confirmadoData[i][0] === parseInt(dni)) {
+    const confDni = String(confirmadoData[i][0]).trim();
+    const confEmail = String(confirmadoData[i][2] || '').toLowerCase().trim();
+
+    // AMBOS deben coincidir para estar confirmado
+    const dniMatch = (confDni === dni || confDni === String(parseInt(dni)));
+    const emailMatch = (confEmail === emailLower) || (confEmail === '' && emailLower === '');
+
+    if (dniMatch && emailMatch) {
       isConfirmed = true;
       break;
     }
@@ -517,7 +599,8 @@ function checkUserAccess(dni) {
       reason: 'Usuario confirmado',
       attemptCount: attemptCount,
       isFirstAttempt: false,
-      isConfirmed: true
+      isConfirmed: true,
+      isFraudAttempt: false
     };
   }
 
@@ -527,7 +610,8 @@ function checkUserAccess(dni) {
     reason: 'Requiere inscripción para más intentos',
     attemptCount: attemptCount,
     isFirstAttempt: false,
-    isConfirmed: false
+    isConfirmed: false,
+    isFraudAttempt: false
   };
 }
 

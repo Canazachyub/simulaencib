@@ -20,26 +20,32 @@ export function StudentForm() {
   const [accessCheck, setAccessCheck] = useState<AccessCheckResult | null>(null);
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
 
-  // Verificar acceso cuando el DNI tenga 8 dígitos
+  // Verificar acceso cuando el DNI tenga 8 dígitos Y el email sea válido
   useEffect(() => {
-    const checkUserAccess = async () => {
-      if (dni.length === 8 && validateDNI(dni)) {
+    const checkUserAccessAsync = async () => {
+      const dniValid = dni.length === 8 && validateDNI(dni);
+      const emailValid = email.trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+      if (dniValid && emailValid) {
         setIsCheckingAccess(true);
         try {
-          const result = await checkAccess(dni);
+          const result = await checkAccess(dni, email);
           setAccessCheck(result);
         } catch (err) {
           setAccessCheck(null);
         }
         setIsCheckingAccess(false);
+      } else if (dniValid && !emailValid) {
+        // Si solo DNI válido, limpiar check anterior pero no verificar aún
+        setAccessCheck(null);
       } else {
         setAccessCheck(null);
       }
     };
 
-    const debounceTimer = setTimeout(checkUserAccess, 500);
+    const debounceTimer = setTimeout(checkUserAccessAsync, 500);
     return () => clearTimeout(debounceTimer);
-  }, [dni]);
+  }, [dni, email]);
 
   // Cargar configuración al montar
   useEffect(() => {
@@ -211,6 +217,11 @@ export function StudentForm() {
                       <span className="w-4 h-4 flex items-center justify-center">✓</span>
                       {accessCheck.isFirstAttempt ? 'Primer examen gratuito' : `Acceso confirmado (${accessCheck.attemptCount} intento${accessCheck.attemptCount > 1 ? 's' : ''} previo${accessCheck.attemptCount > 1 ? 's' : ''})`}
                     </>
+                  ) : accessCheck.isFraudAttempt ? (
+                    <>
+                      <AlertCircle className="w-4 h-4" />
+                      {accessCheck.reason}
+                    </>
                   ) : (
                     <>
                       <Lock className="w-4 h-4" />
@@ -334,23 +345,40 @@ export function StudentForm() {
           {accessCheck && !accessCheck.canAccess && (
             <div className="mt-6 p-4 bg-red-50 rounded-xl border border-red-200">
               <div className="flex items-start gap-3">
-                <Lock className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                {accessCheck.isFraudAttempt ? (
+                  <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <Lock className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                )}
                 <div>
-                  <p className="text-sm font-semibold text-red-800 mb-2">
-                    Ya realizaste tu examen gratuito
-                  </p>
-                  <p className="text-sm text-red-700 mb-3">
-                    Para acceder a más simulacros, inscríbete por WhatsApp:
-                  </p>
-                  <a
-                    href="https://wa.link/h2darz"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors"
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                    Solicitar acceso por WhatsApp
-                  </a>
+                  {accessCheck.isFraudAttempt ? (
+                    <>
+                      <p className="text-sm font-semibold text-red-800 mb-2">
+                        {accessCheck.reason}
+                      </p>
+                      <p className="text-sm text-red-700 mb-3">
+                        Por favor utiliza los mismos datos con los que te registraste originalmente.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-red-800 mb-2">
+                        Ya realizaste tu examen gratuito
+                      </p>
+                      <p className="text-sm text-red-700 mb-3">
+                        Para acceder a más simulacros, inscríbete por WhatsApp:
+                      </p>
+                      <a
+                        href="https://wa.link/h2darz"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        Solicitar acceso por WhatsApp
+                      </a>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
