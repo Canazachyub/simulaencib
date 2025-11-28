@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Brain, ArrowLeft, User, Mail, Loader2, AlertCircle, Lock, CheckCircle } from 'lucide-react';
+import { Brain, ArrowLeft, User, Mail, Loader2, AlertCircle, Lock, CheckCircle, MessageCircle } from 'lucide-react';
 import { checkBanqueoAccess } from '../services/api';
 
 export function BanqueoAccess() {
@@ -84,9 +84,18 @@ export function BanqueoAccess() {
                     <p className="text-sm text-amber-800 font-medium">
                       Exclusivo para usuarios inscritos
                     </p>
-                    <p className="text-xs text-amber-700 mt-1">
+                    <p className="text-xs text-amber-700 mt-1 mb-3">
                       El Banqueo Histórico está disponible solo para usuarios que han confirmado su inscripción.
                     </p>
+                    <a
+                      href="https://wa.link/h2darz"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Inscríbete por WhatsApp
+                    </a>
                   </div>
                 </div>
               </div>
@@ -147,9 +156,18 @@ export function BanqueoAccess() {
                       <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                       <div>
                         <p className="text-sm text-red-700 font-medium">{error}</p>
-                        <p className="text-xs text-red-600 mt-1">
-                          Contacta al administrador si crees que esto es un error.
+                        <p className="text-xs text-red-600 mt-2 mb-3">
+                          Para acceder al Banqueo Histórico, inscríbete por WhatsApp:
                         </p>
+                        <a
+                          href="https://wa.link/h2darz"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          Solicitar acceso por WhatsApp
+                        </a>
                       </div>
                     </div>
                   </div>
