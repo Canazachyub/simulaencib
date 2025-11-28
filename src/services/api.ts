@@ -282,24 +282,24 @@ export async function checkAccess(dni: string, email: string): Promise<AccessChe
     });
 
     const url = `${API_BASE_URL}?${params.toString()}`;
-    const response = await fetchWithTimeout(url, 15000);
+    const response = await fetchWithTimeout(url, 20000); // 20 segundos
 
     if (!response.ok) {
-      // Si hay error, permitir acceso por defecto
-      return { canAccess: true, reason: 'Error de conexión', attemptCount: 0 };
+      // Si hay error de servidor, DENEGAR acceso por seguridad
+      return { canAccess: false, reason: 'Error de conexión - intenta de nuevo', attemptCount: 0 };
     }
 
     const result = await response.json();
 
     if (!result.success) {
-      return { canAccess: true, reason: 'Error de verificación', attemptCount: 0 };
+      return { canAccess: false, reason: 'Error de verificación - intenta de nuevo', attemptCount: 0 };
     }
 
     return result.data as AccessCheckResult;
   } catch (error) {
     console.error('Error al verificar acceso:', error);
-    // En caso de error, permitir el acceso para no bloquear usuarios
-    return { canAccess: true, reason: 'Error de conexión', attemptCount: 0 };
+    // En caso de error/timeout, DENEGAR acceso por seguridad
+    return { canAccess: false, reason: 'No se pudo verificar - intenta de nuevo', attemptCount: 0 };
   }
 }
 
