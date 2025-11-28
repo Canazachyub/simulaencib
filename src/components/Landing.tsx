@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Stethoscope, BookOpen, Clock, Award, ChevronRight, CheckCircle,
   FileText, BarChart3, Zap, Target, Brain, Activity, Heart, Microscope,
-  Play, Users, TrendingUp
+  Play, Users, TrendingUp, Library
 } from 'lucide-react';
 import { COURSES, COURSE_CONFIG } from '../types';
 
@@ -93,6 +93,13 @@ export function Landing() {
               >
                 Comenzar Simulacro
                 <ChevronRight className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => navigate('/banqueo')}
+                className="btn text-lg px-8 py-4 bg-purple-600 text-white hover:bg-purple-700 shadow-xl"
+              >
+                <Library className="w-5 h-5" />
+                Banqueo Histórico
               </button>
             </div>
 

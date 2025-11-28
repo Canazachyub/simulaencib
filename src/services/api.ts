@@ -304,6 +304,117 @@ export async function checkAccess(dni: string, email: string): Promise<AccessChe
 }
 
 // ============================================
+// BANQUEO HISTÓRICO - SOLO USUARIOS CONFIRMADOS
+// ============================================
+
+export interface BanqueoAccessResult {
+  canAccess: boolean;
+  reason: string;
+  isConfirmed?: boolean;
+}
+
+export interface BanqueoQuestion {
+  id: string;
+  number: number;
+  questionText: string;
+  questionType: string;
+  options: string[];
+  correctAnswer: number;
+  imageLink: string | null;
+  subject: string;
+  metadata: {
+    numero: number;
+    tema: string;
+    subtema: string;
+  };
+}
+
+export interface BanqueoQuestionsResult {
+  course: string;
+  totalQuestions: number;
+  questions: BanqueoQuestion[];
+  error?: string;
+}
+
+/**
+ * Verifica si un usuario puede acceder al Banqueo Histórico
+ * SOLO usuarios confirmados (NO hay intento gratis)
+ */
+export async function checkBanqueoAccess(dni: string, email: string): Promise<BanqueoAccessResult> {
+  try {
+    const params = new URLSearchParams({
+      action: 'checkBanqueoAccess',
+      dni: dni,
+      email: email.toLowerCase().trim()
+    });
+
+    const url = `${API_BASE_URL}?${params.toString()}`;
+    const response = await fetchWithTimeout(url, 20000);
+
+    if (!response.ok) {
+      return { canAccess: false, reason: 'Error de conexión - intenta de nuevo' };
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      return { canAccess: false, reason: 'Error de verificación' };
+    }
+
+    return result.data as BanqueoAccessResult;
+  } catch (error) {
+    console.error('Error al verificar acceso a banqueo:', error);
+    return { canAccess: false, reason: 'No se pudo verificar - intenta de nuevo' };
+  }
+}
+
+/**
+ * Obtiene 10 preguntas aleatorias de un curso específico para el Banqueo
+ */
+export async function getBanqueoQuestions(courseName: string): Promise<BanqueoQuestionsResult> {
+  try {
+    const params = new URLSearchParams({
+      action: 'getBanqueoQuestions',
+      course: courseName
+    });
+
+    const url = `${API_BASE_URL}?${params.toString()}`;
+    const response = await fetchWithTimeout(url, 20000);
+
+    if (!response.ok) {
+      throw new Error(`Error HTTP: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'Error al obtener preguntas');
+    }
+
+    return result.data as BanqueoQuestionsResult;
+  } catch (error) {
+    console.error('Error al obtener preguntas del banqueo:', error);
+    throw new Error(
+      error instanceof Error
+        ? error.message
+        : 'No se pudo cargar las preguntas. Por favor, intenta de nuevo.'
+    );
+  }
+}
+
+// Lista de cursos disponibles para el banqueo
+export const BANQUEO_COURSES = [
+  { code: 1, name: 'Anatomía' },
+  { code: 2, name: 'Embriología' },
+  { code: 3, name: 'Histología' },
+  { code: 4, name: 'Bioquímica' },
+  { code: 5, name: 'Fisiología' },
+  { code: 6, name: 'Patología' },
+  { code: 7, name: 'Farmacología' },
+  { code: 8, name: 'Microbiología-Parasitología' }
+];
+
+// ============================================
 // DATOS DE PRUEBA (MOCK) PARA DESARROLLO
 // ============================================
 
