@@ -356,13 +356,19 @@ export function BanqueoPractice() {
                 ) : (
                   <AlertCircle className="w-6 h-6 text-amber-500 flex-shrink-0" />
                 )}
-                <div>
+                <div className="flex-1">
                   <p className={`font-bold ${currentState.isCorrect ? 'text-green-700' : 'text-amber-700'}`}>
                     {currentState.isCorrect ? '¡Correcto!' : 'Incorrecto'}
                   </p>
                   <p className="text-sm text-slate-600 mt-1">
                     La respuesta correcta es la opción <strong>{String.fromCharCode(65 + currentQuestion.correctAnswer)}</strong>
                   </p>
+                  {currentQuestion.justification && (
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                      <p className="text-sm font-semibold text-slate-700 mb-1">Justificación:</p>
+                      <p className="text-sm text-slate-600" dangerouslySetInnerHTML={{ __html: currentQuestion.justification }} />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

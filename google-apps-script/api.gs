@@ -197,7 +197,8 @@
       numero: headers.indexOf('NUMERO'),
       tema: headers.indexOf('TEMA'),
       subtema: headers.indexOf('SUBTEMA'),
-      sourceFile: headers.indexOf('NOMBRE DEL ARCHIVO')
+      sourceFile: headers.indexOf('NOMBRE DEL ARCHIVO'),
+      justification: headers.indexOf('JUSTIFICACION')
     };
 
     // Obtener todas las preguntas válidas
@@ -246,6 +247,7 @@
         subject: courseName,
         points: 1, // Siempre 1 punto en ENCIB
         sourceFile: row[colIndices.sourceFile] || null,
+        justification: row[colIndices.justification] || null,
         metadata: {
           numero: row[colIndices.numero],
           tema: row[colIndices.tema],
@@ -742,7 +744,8 @@
       numero: headers.indexOf('NUMERO'),
       tema: headers.indexOf('TEMA'),
       subtema: headers.indexOf('SUBTEMA'),
-      sourceFile: headers.indexOf('NOMBRE DEL ARCHIVO')
+      sourceFile: headers.indexOf('NOMBRE DEL ARCHIVO'),
+      justification: headers.indexOf('JUSTIFICACION')
     };
 
     // Obtener todas las preguntas válidas
@@ -786,6 +789,7 @@
         imageLink: row[colIndices.imageLink] || null,
         subject: courseName,
         sourceFile: row[colIndices.sourceFile] || null,
+        justification: row[colIndices.justification] || null,
         metadata: {
           numero: row[colIndices.numero],
           tema: row[colIndices.tema],

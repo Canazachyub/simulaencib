@@ -323,6 +323,7 @@ export interface BanqueoQuestion {
   imageLink: string | null;
   subject: string;
   sourceFile: string | null;
+  justification: string | null;
   metadata: {
     numero: number;
     tema: string;

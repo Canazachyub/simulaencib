@@ -519,6 +519,17 @@ export function Results() {
               )}
             </div>
 
+            {/* Justification */}
+            {currentQuestion.justification && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm font-semibold text-blue-700 mb-2">Justificación:</p>
+                <div
+                  className="text-sm text-blue-800 prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: currentQuestion.justification }}
+                />
+              </div>
+            )}
+
             {/* Navigation */}
             <div className="flex gap-3 mt-4">
               <button

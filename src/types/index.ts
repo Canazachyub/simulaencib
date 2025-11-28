@@ -62,6 +62,7 @@ export interface Question {
   subject: string; // Nombre del curso (CourseType)
   points: number; // Siempre 1 en ENCIB
   sourceFile?: string | null;
+  justification?: string | null; // Explicación de la respuesta correcta
   metadata?: QuestionMetadata;
 }
 
