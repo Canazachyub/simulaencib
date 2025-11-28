@@ -76,6 +76,13 @@ function doGet(e) {
         }
         result = getUserHistory(historyDni);
         break;
+      case 'checkAccess':
+        const accessDni = e.parameter.dni || '';
+        if (!accessDni) {
+          return createErrorResponse('Parámetro "dni" requerido');
+        }
+        result = checkUserAccess(accessDni);
+        break;
       case 'test':
         result = { status: 'ok', message: 'SimulaENCIB API funcionando correctamente', timestamp: new Date().toISOString() };
         break;
@@ -437,4 +444,97 @@ function testDoGet() {
 
   const questionsResult = doGet({ parameter: { action: 'questions' } });
   console.log('Questions:', questionsResult.getContent());
+}
+
+// ============================================
+// VERIFICACIÓN DE ACCESO - HOJA "confirmado"
+// ============================================
+
+/**
+ * Verifica si un usuario puede dar el examen
+ * - Primer examen: LIBRE para todos
+ * - Segundo examen en adelante: Solo si está en hoja "confirmado"
+ *
+ * @param {string} dni - DNI del usuario
+ * @returns {object} { canAccess: boolean, reason: string, attemptCount: number }
+ */
+function checkUserAccess(dni) {
+  if (!dni) {
+    return { canAccess: false, reason: 'DNI requerido', attemptCount: 0 };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  // 1. Contar intentos previos en historial_puntajes
+  const historySheet = ss.getSheetByName('historial_puntajes');
+  let attemptCount = 0;
+
+  if (historySheet) {
+    const historyData = historySheet.getDataRange().getValues();
+    for (let i = 1; i < historyData.length; i++) {
+      if (historyData[i][0] === dni || historyData[i][0] === parseInt(dni)) {
+        attemptCount++;
+      }
+    }
+  }
+
+  // 2. Si es el primer intento, LIBRE
+  if (attemptCount === 0) {
+    return {
+      canAccess: true,
+      reason: 'Primer examen gratuito',
+      attemptCount: attemptCount,
+      isFirstAttempt: true
+    };
+  }
+
+  // 3. Para segundo intento+, verificar si está en hoja "confirmado"
+  let confirmadoSheet = ss.getSheetByName('confirmado');
+
+  // Crear hoja si no existe (con encabezados)
+  if (!confirmadoSheet) {
+    confirmadoSheet = ss.insertSheet('confirmado');
+    confirmadoSheet.appendRow(['DNI', 'Nombre', 'Email']);
+    confirmadoSheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+    confirmadoSheet.setColumnWidth(1, 100);
+    confirmadoSheet.setColumnWidth(2, 250);
+    confirmadoSheet.setColumnWidth(3, 220);
+  }
+
+  const confirmadoData = confirmadoSheet.getDataRange().getValues();
+  let isConfirmed = false;
+
+  for (let i = 1; i < confirmadoData.length; i++) {
+    if (confirmadoData[i][0] === dni || confirmadoData[i][0] === parseInt(dni)) {
+      isConfirmed = true;
+      break;
+    }
+  }
+
+  if (isConfirmed) {
+    return {
+      canAccess: true,
+      reason: 'Usuario confirmado',
+      attemptCount: attemptCount,
+      isFirstAttempt: false,
+      isConfirmed: true
+    };
+  }
+
+  // Usuario no confirmado para segundo intento
+  return {
+    canAccess: false,
+    reason: 'Requiere inscripción para más intentos',
+    attemptCount: attemptCount,
+    isFirstAttempt: false,
+    isConfirmed: false
+  };
+}
+
+/**
+ * Función de prueba para checkUserAccess
+ */
+function testCheckAccess() {
+  const result = checkUserAccess('12345678');
+  console.log(JSON.stringify(result, null, 2));
 }

@@ -255,6 +255,52 @@ export async function getUserHistory(dni: string): Promise<UserHistory | null> {
 }
 
 // ============================================
+// VERIFICACIÓN DE ACCESO
+// ============================================
+
+export interface AccessCheckResult {
+  canAccess: boolean;
+  reason: string;
+  attemptCount: number;
+  isFirstAttempt?: boolean;
+  isConfirmed?: boolean;
+}
+
+/**
+ * Verifica si un usuario puede dar el examen
+ * - Primer examen: LIBRE
+ * - Segundo+: Requiere estar en hoja "confirmado"
+ */
+export async function checkAccess(dni: string): Promise<AccessCheckResult> {
+  try {
+    const params = new URLSearchParams({
+      action: 'checkAccess',
+      dni: dni
+    });
+
+    const url = `${API_BASE_URL}?${params.toString()}`;
+    const response = await fetchWithTimeout(url, 15000);
+
+    if (!response.ok) {
+      // Si hay error, permitir acceso por defecto
+      return { canAccess: true, reason: 'Error de conexión', attemptCount: 0 };
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      return { canAccess: true, reason: 'Error de verificación', attemptCount: 0 };
+    }
+
+    return result.data as AccessCheckResult;
+  } catch (error) {
+    console.error('Error al verificar acceso:', error);
+    // En caso de error, permitir el acceso para no bloquear usuarios
+    return { canAccess: true, reason: 'Error de conexión', attemptCount: 0 };
+  }
+}
+
+// ============================================
 // DATOS DE PRUEBA (MOCK) PARA DESARROLLO
 // ============================================
 

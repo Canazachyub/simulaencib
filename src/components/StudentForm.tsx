@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, CreditCard, ChevronRight, ChevronLeft, Loader2, AlertCircle, Mail, Phone, GraduationCap, Stethoscope } from 'lucide-react';
+import { User, CreditCard, ChevronRight, ChevronLeft, Loader2, AlertCircle, Mail, Phone, GraduationCap, Stethoscope, MessageCircle, Lock } from 'lucide-react';
 import { useExamStore } from '../hooks/useExam';
 import { validateDNI, validateName } from '../utils/calculations';
-import { registerUser } from '../services/api';
+import { registerUser, checkAccess, AccessCheckResult } from '../services/api';
 import { UNIVERSITIES_BY_REGION, ALL_UNIVERSITIES } from '../types';
 
 export function StudentForm() {
@@ -17,6 +17,29 @@ export function StudentForm() {
   const [university, setUniversity] = useState('');
   const [errors, setErrors] = useState<{ dni?: string; name?: string; email?: string; phone?: string; university?: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [accessCheck, setAccessCheck] = useState<AccessCheckResult | null>(null);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(false);
+
+  // Verificar acceso cuando el DNI tenga 8 dígitos
+  useEffect(() => {
+    const checkUserAccess = async () => {
+      if (dni.length === 8 && validateDNI(dni)) {
+        setIsCheckingAccess(true);
+        try {
+          const result = await checkAccess(dni);
+          setAccessCheck(result);
+        } catch (err) {
+          setAccessCheck(null);
+        }
+        setIsCheckingAccess(false);
+      } else {
+        setAccessCheck(null);
+      }
+    };
+
+    const debounceTimer = setTimeout(checkUserAccess, 500);
+    return () => clearTimeout(debounceTimer);
+  }, [dni]);
 
   // Cargar configuración al montar
   useEffect(() => {
@@ -65,6 +88,11 @@ export function StudentForm() {
 
     if (!university) {
       newErrors.university = 'Selecciona tu universidad';
+    }
+
+    // Verificar acceso
+    if (accessCheck && !accessCheck.canAccess) {
+      newErrors.dni = 'Necesitas inscribirte para dar más exámenes';
     }
 
     setErrors(newErrors);
@@ -168,6 +196,27 @@ export function StudentForm() {
                 <p className="text-red-500 text-sm mt-2 flex items-center gap-1">
                   <AlertCircle className="w-4 h-4" />
                   {errors.dni}
+                </p>
+              )}
+              {isCheckingAccess && (
+                <p className="text-slate-500 text-sm mt-2 flex items-center gap-1">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Verificando acceso...
+                </p>
+              )}
+              {accessCheck && !errors.dni && !isCheckingAccess && (
+                <p className={`text-sm mt-2 flex items-center gap-1 ${accessCheck.canAccess ? 'text-green-600' : 'text-red-500'}`}>
+                  {accessCheck.canAccess ? (
+                    <>
+                      <span className="w-4 h-4 flex items-center justify-center">✓</span>
+                      {accessCheck.isFirstAttempt ? 'Primer examen gratuito' : `Acceso confirmado (${accessCheck.attemptCount} intento${accessCheck.attemptCount > 1 ? 's' : ''} previo${accessCheck.attemptCount > 1 ? 's' : ''})`}
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" />
+                      Ya realizaste {accessCheck.attemptCount} intento{accessCheck.attemptCount > 1 ? 's' : ''} - Inscríbete para continuar
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -281,11 +330,45 @@ export function StudentForm() {
             </div>
           </div>
 
+          {/* Access denied message */}
+          {accessCheck && !accessCheck.canAccess && (
+            <div className="mt-6 p-4 bg-red-50 rounded-xl border border-red-200">
+              <div className="flex items-start gap-3">
+                <Lock className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-red-800 mb-2">
+                    Ya realizaste tu examen gratuito
+                  </p>
+                  <p className="text-sm text-red-700 mb-3">
+                    Para acceder a más simulacros, inscríbete por WhatsApp:
+                  </p>
+                  <a
+                    href="https://wa.link/h2darz"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    Solicitar acceso por WhatsApp
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Info box */}
           <div className="mt-6 p-4 bg-cyan-50 rounded-xl border border-cyan-100">
             <p className="text-sm text-cyan-800">
-              <strong>Nota:</strong> Tu DNI se usa para identificar tu historial de simulacros.
-              Todos los campos son obligatorios.
+              <strong>Tu primer simulacro es GRATIS.</strong> Para acceder a más intentos,
+              solicita tu inscripción por WhatsApp:{' '}
+              <a
+                href="https://wa.link/h2darz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-green-600 hover:text-green-700 font-semibold underline"
+              >
+                Inscríbete aquí
+              </a>
             </p>
           </div>
 
@@ -299,13 +382,23 @@ export function StudentForm() {
             </button>
             <button
               onClick={handleSubmit}
-              className="btn-primary bg-cyan-600 hover:bg-cyan-700"
-              disabled={isSubmitting}
+              className={`btn-primary ${accessCheck && !accessCheck.canAccess ? 'bg-slate-400 cursor-not-allowed' : 'bg-cyan-600 hover:bg-cyan-700'}`}
+              disabled={isSubmitting || isCheckingAccess || (accessCheck !== null && !accessCheck.canAccess)}
             >
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
                   Registrando...
+                </>
+              ) : isCheckingAccess ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Verificando...
+                </>
+              ) : accessCheck && !accessCheck.canAccess ? (
+                <>
+                  <Lock className="w-5 h-5" />
+                  Acceso restringido
                 </>
               ) : (
                 <>
