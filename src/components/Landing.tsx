@@ -207,7 +207,7 @@ export function Landing() {
               <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
                 <iframe
                   className="absolute inset-0 w-full h-full"
-                  src="https://www.youtube.com/embed/2lBlP6Q_Ka0"
+                  src="https://www.youtube.com/embed/3ZonKRAc2z0"
                   title="Presentación ENCIB 2025"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
