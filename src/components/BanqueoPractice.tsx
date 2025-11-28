@@ -271,13 +271,18 @@ export function BanqueoPractice() {
         {/* Question Card */}
         <div className="bg-white rounded-2xl shadow-sm p-6 mb-6">
           {/* Question Type Badge */}
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-4">
             <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
               {currentQuestion.questionType}
             </span>
             {currentQuestion.metadata?.tema && (
               <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-sm">
                 {currentQuestion.metadata.tema}
+              </span>
+            )}
+            {currentQuestion.sourceFile && (
+              <span className="px-3 py-1 bg-amber-50 text-amber-700 rounded-full text-xs">
+                Tomado en: {currentQuestion.sourceFile}
               </span>
             )}
           </div>

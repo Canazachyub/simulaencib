@@ -785,6 +785,7 @@
         correctAnswer: correctAnswerIndex,
         imageLink: row[colIndices.imageLink] || null,
         subject: courseName,
+        sourceFile: row[colIndices.sourceFile] || null,
         metadata: {
           numero: row[colIndices.numero],
           tema: row[colIndices.tema],

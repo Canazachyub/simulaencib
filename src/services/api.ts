@@ -322,6 +322,7 @@ export interface BanqueoQuestion {
   correctAnswer: number;
   imageLink: string | null;
   subject: string;
+  sourceFile: string | null;
   metadata: {
     numero: number;
     tema: string;
