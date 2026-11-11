@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, CreditCard, ChevronRight, ChevronLeft, Loader2, AlertCircle, Mail, Phone, GraduationCap, Stethoscope, MessageCircle, Lock } from 'lucide-react';
-import { useExamStore } from '../hooks/useExam';
+import { useExamStore, useExamCatalog, useSelectedExam } from '../hooks/useExam';
 import { validateDNI, validateName } from '../utils/calculations';
 import { registerUser, checkAccess, AccessCheckResult } from '../services/api';
-import { UNIVERSITIES_BY_REGION, ALL_UNIVERSITIES } from '../types';
+import { UNIVERSITIES_BY_REGION, SITE_NAME } from '../types';
+import { ExamSelector } from './ExamSelector';
 
 export function StudentForm() {
   const navigate = useNavigate();
-  const { setStudent, loadConfig, config, status, error } = useExamStore();
+  const { setStudent, loadConfig, config, status, error, selectExam } = useExamStore();
+  const { exams } = useExamCatalog();
+  const exam = useSelectedExam();
 
   const [dni, setDni] = useState('');
   const [fullName, setFullName] = useState('');
@@ -29,7 +32,7 @@ export function StudentForm() {
       if (dniValid && emailValid) {
         setIsCheckingAccess(true);
         try {
-          const result = await checkAccess(dni, email);
+          const result = await checkAccess(dni, email, exam.id);
           setAccessCheck(result);
         } catch (err) {
           setAccessCheck(null);
@@ -45,14 +48,14 @@ export function StudentForm() {
 
     const debounceTimer = setTimeout(checkUserAccessAsync, 500);
     return () => clearTimeout(debounceTimer);
-  }, [dni, email]);
+  }, [dni, email, exam.id]);
 
-  // Cargar configuración al montar
+  // Cargar configuración del examen seleccionado
   useEffect(() => {
-    if (!config) {
+    if (!config || config.id !== exam.id) {
       loadConfig();
     }
-  }, [config, loadConfig]);
+  }, [config, exam.id, loadConfig]);
 
   const validateEmail = (email: string): boolean => {
     if (!email.trim()) return false; // Email es obligatorio
@@ -170,13 +173,28 @@ export function StudentForm() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-cyan-100 text-cyan-600 rounded-2xl mb-4">
             <Stethoscope className="w-8 h-8" />
           </div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-cyan-600 mb-1">
+            {SITE_NAME}
+          </p>
           <h1 className="text-2xl md:text-3xl font-bold text-slate-800 mb-2">
-            SimulaENCIB
+            Simulacro {exam.nombre}
           </h1>
           <p className="text-slate-600">
             Ingresa tus datos para comenzar el simulacro
           </p>
         </div>
+
+        {exams.length > 1 && (
+          <div className="mb-6">
+            <p className="text-sm text-slate-600 mb-2 text-center">Examen a simular</p>
+            <ExamSelector
+              exams={exams}
+              selectedId={exam.id}
+              onSelect={selectExam}
+              variant="light"
+            />
+          </div>
+        )}
 
         <div className="card p-8 animate-fade-in">
           <div className="space-y-6">
@@ -215,7 +233,7 @@ export function StudentForm() {
                   {accessCheck.canAccess ? (
                     <>
                       <span className="w-4 h-4 flex items-center justify-center">✓</span>
-                      {accessCheck.isFirstAttempt ? 'Primer examen gratuito' : `Acceso confirmado (${accessCheck.attemptCount} intento${accessCheck.attemptCount > 1 ? 's' : ''} previo${accessCheck.attemptCount > 1 ? 's' : ''})`}
+                      {accessCheck.isFirstAttempt ? `Primer simulacro ${exam.nombre} gratuito` : `Acceso confirmado (${accessCheck.attemptCount} intento${accessCheck.attemptCount > 1 ? 's' : ''} previo${accessCheck.attemptCount > 1 ? 's' : ''})`}
                     </>
                   ) : accessCheck.isFraudAttempt ? (
                     <>
@@ -363,10 +381,10 @@ export function StudentForm() {
                   ) : (
                     <>
                       <p className="text-sm font-semibold text-red-800 mb-2">
-                        Ya realizaste tu examen gratuito
+                        Ya realizaste tu simulacro gratuito de {exam.nombre}
                       </p>
                       <p className="text-sm text-red-700 mb-3">
-                        Para acceder a más simulacros, inscríbete por WhatsApp:
+                        Para acceder a más simulacros de {exam.nombre}, inscríbete por WhatsApp:
                       </p>
                       <a
                         href="https://wa.link/h2darz"
@@ -387,7 +405,7 @@ export function StudentForm() {
           {/* Info box */}
           <div className="mt-6 p-4 bg-cyan-50 rounded-xl border border-cyan-100">
             <p className="text-sm text-cyan-800">
-              <strong>Tu primer simulacro es GRATIS.</strong> Para acceder a más intentos,
+              <strong>Tu primer simulacro de {exam.nombre} es GRATIS.</strong> Para acceder a más intentos,
               solicita tu inscripción por WhatsApp:{' '}
               <a
                 href="https://wa.link/h2darz"

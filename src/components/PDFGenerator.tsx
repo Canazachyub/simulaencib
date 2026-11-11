@@ -3,8 +3,26 @@ import { Download, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { ExamResult } from '../types';
-import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES } from '../types';
-import { formatNumber, formatDate, formatTimeReadable, formatVigesimalScore } from '../utils/calculations';
+import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES, SITE_NAME } from '../types';
+import { formatDate, formatTimeReadable, formatVigesimalScore, formatPoints } from '../utils/calculations';
+
+// jsPDF (fuentes estándar) no maneja bien algunos caracteres tipográficos
+function pdfText(text: string): string {
+  return text
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, '...');
+}
+
+// Subtítulo del PDF por examen (sin tildes por compatibilidad con jsPDF)
+const PDF_DESCRIPTIONS: Record<string, string> = {
+  encib: 'Examen Nacional de Ciencias Basicas - ASPEFAM',
+  enam: 'Examen Nacional de Medicina - ASPEFAM',
+  rm: 'Examen de admision al Residentado Medico - CONAREME',
+  serums: 'Evaluacion para el SERUMS - MINSA',
+  essalud: 'Examen de ingreso al Internado Medico EsSalud'
+};
 
 interface PDFGeneratorProps {
   result: ExamResult;
@@ -25,20 +43,28 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
       // Obtener nombre de la universidad
       const universityInfo = ALL_UNIVERSITIES.find(u => u.code === result.student.university);
       const universityName = universityInfo ? universityInfo.name : result.student.university;
+      const examName = result.examName ?? 'ENCIB';
+      const scaleMax = result.scaleMax ?? 20;
+      const passing = result.passing ?? null;
+      const hasWeightedPoints = Math.abs((result.maxPoints ?? result.totalQuestions) - result.totalQuestions) > 0.001;
 
-      // Header - Cyan color for ENCIB
+      // Header
       doc.setFillColor(8, 145, 178); // cyan-600
       doc.rect(0, 0, pageWidth, 45, 'F');
 
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(24);
       doc.setFont('helvetica', 'bold');
-      doc.text('SimulaENCIB', pageWidth / 2, 20, { align: 'center' });
+      doc.text(SITE_NAME, pageWidth / 2, 20, { align: 'center' });
 
       doc.setFontSize(12);
       doc.setFont('helvetica', 'normal');
-      doc.text('Resultados del Simulacro ENCIB', pageWidth / 2, 30, { align: 'center' });
-      doc.text('Examen Nacional de Ciencias Basicas', pageWidth / 2, 38, { align: 'center' });
+      doc.text(pdfText(`Resultados del Simulacro ${examName}`), pageWidth / 2, 30, { align: 'center' });
+      if (result.examId) {
+        doc.setFontSize(9);
+        const examDesc = pdfText(doc.splitTextToSize(PDF_DESCRIPTIONS[result.examId] ?? '', pageWidth - 40)[0] ?? '');
+        if (examDesc) doc.text(examDesc, pageWidth / 2, 38, { align: 'center' });
+      }
 
       yPos = 55;
 
@@ -55,17 +81,17 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
       doc.setTextColor(30, 41, 59); // slate-800
       doc.text(`DNI: ${result.student.dni}`, margin + 5, yPos + 22);
       doc.text(`Nombre: ${result.student.fullName}`, margin + 5, yPos + 32);
-      doc.text(`Universidad: ${universityName}`, pageWidth / 2, yPos + 22);
+      doc.text(pdfText(`Universidad: ${doc.splitTextToSize(universityName || '', pageWidth / 2 - margin - 5)[0] ?? ''}`), pageWidth / 2, yPos + 22);
       doc.text(`Fecha: ${formatDate(result.date)}`, pageWidth / 2, yPos + 32);
 
       yPos += 55;
 
-      // Score box - Vigesimal prominente
+      // Score box - Nota en la escala del examen
       const performanceInfo = PERFORMANCE_MESSAGES[result.performanceLevel];
       doc.setFillColor(236, 254, 255); // cyan-50
       doc.roundedRect(margin, yPos, pageWidth - margin * 2, 45, 3, 3, 'F');
 
-      // Nota Vigesimal grande
+      // Nota grande
       doc.setTextColor(8, 145, 178); // cyan-600
       doc.setFontSize(32);
       doc.setFont('helvetica', 'bold');
@@ -74,12 +100,17 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
       doc.setFontSize(14);
       doc.setTextColor(100, 116, 139); // slate-500
       doc.setFont('helvetica', 'normal');
-      doc.text('/ 20  (Nota Vigesimal)', pageWidth / 2 + 20, yPos + 20, { align: 'left' });
+      doc.text(`/ ${scaleMax}  (Nota)`, pageWidth / 2 + 20, yPos + 20, { align: 'left' });
 
       doc.setFontSize(11);
       doc.setTextColor(71, 85, 105);
       doc.text(
-        `${result.correctAnswers} de ${result.totalQuestions} correctas  |  ${result.percentage.toFixed(1)}%  |  ${performanceInfo.title}`,
+        pdfText(
+          `${result.correctAnswers} de ${result.totalQuestions} correctas  |  ${result.percentage.toFixed(1)}%  |  ` +
+          (passing !== null
+            ? `${result.passed ? 'APROBADO' : 'DESAPROBADO'} (minima ${passing})`
+            : performanceInfo.title)
+        ),
         pageWidth / 2,
         yPos + 35,
         { align: 'center' }
@@ -146,30 +177,42 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
 
       yPos += 5;
 
-      // Results table - ENCIB format (sin columna de puntos)
-      const tableData = result.courseResults.map((course) => [
-        course.name,
-        `${course.correctAnswers} / ${course.totalQuestions}`,
-        `${course.percentage.toFixed(1)}%`
-      ]);
+      // Tabla de resultados por curso (con columna de puntos si el examen pondera)
+      const tableData = result.courseResults.map((course) => {
+        const row = [
+          pdfText(course.name),
+          `${course.correctAnswers} / ${course.totalQuestions}`,
+          `${course.percentage.toFixed(1)}%`
+        ];
+        if (hasWeightedPoints) row.push(`${formatPoints(course.pointsEarned ?? 0)} / ${formatPoints(course.pointsTotal ?? 0)}`);
+        return row;
+      });
 
-      // Add totals row
-      tableData.push([
+      // Fila de totales
+      const totalRow = [
         'TOTAL',
         `${totalCorrect} / ${result.totalQuestions}`,
         `${result.percentage.toFixed(1)}%`
-      ]);
+      ];
+      if (hasWeightedPoints) totalRow.push(`${formatPoints(result.rawScore)} / ${formatPoints(result.maxPoints)}`);
+      tableData.push(totalRow);
 
-      // Add vigesimal row
-      tableData.push([
-        'NOTA VIGESIMAL',
+      // Fila de nota
+      const noteRow = [
+        `NOTA (0-${scaleMax})` + (passing !== null ? (result.passed ? ' - APROBADO' : ' - DESAPROBADO') : ''),
         '',
-        formatVigesimalScore(result.vigesimalScore) + ' / 20'
-      ]);
+        formatVigesimalScore(result.vigesimalScore) + ` / ${scaleMax}`
+      ];
+      if (hasWeightedPoints) noteRow.push('');
+      tableData.push(noteRow);
+
+      const head = hasWeightedPoints
+        ? [['Curso / área', 'Correctas', 'Porcentaje', 'Puntos']]
+        : [['Curso / área', 'Correctas', 'Porcentaje']];
 
       autoTable(doc, {
         startY: yPos,
-        head: [['Curso', 'Correctas', 'Porcentaje']],
+        head,
         body: tableData,
         theme: 'striped',
         headStyles: {
@@ -185,7 +228,8 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
         columnStyles: {
           0: { halign: 'left' },
           1: { halign: 'center' },
-          2: { halign: 'center' }
+          2: { halign: 'center' },
+          3: { halign: 'center' }
         },
         alternateRowStyles: {
           fillColor: [248, 250, 252]
@@ -197,7 +241,7 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
             data.cell.styles.textColor = [8, 145, 178]; // cyan-600
             data.cell.styles.fontStyle = 'bold';
           }
-          // Style the NOTA VIGESIMAL row
+          // Style the NOTA row
           if (data.row.index === tableData.length - 1) {
             data.cell.styles.fillColor = [8, 145, 178]; // cyan-600
             data.cell.styles.textColor = [255, 255, 255];
@@ -208,25 +252,29 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
       });
 
       // Footer
-      const finalY = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 15;
+      let finalY = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 15;
+      if (finalY > doc.internal.pageSize.getHeight() - 20) {
+        doc.addPage();
+        finalY = 20;
+      }
       doc.setFontSize(9);
       doc.setTextColor(148, 163, 184);
       doc.setFont('helvetica', 'normal');
       doc.text(
-        'Este documento fue generado automaticamente por SimulaENCIB.',
+        pdfText(`Este documento fue generado automaticamente por ${SITE_NAME}.`),
         pageWidth / 2,
         finalY,
         { align: 'center' }
       );
       doc.text(
-        'Examen Nacional de Ciencias Basicas - ASPEFAM',
+        pdfText(`Simulacro ${examName} - formato basado en el examen oficial`),
         pageWidth / 2,
         finalY + 6,
         { align: 'center' }
       );
 
       // Save PDF
-      const fileName = `SimulaENCIB_${result.student.dni}_${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = `Simulacro_${(result.examId || 'encib').toUpperCase()}_${result.student.dni}_${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
 
     } catch (error) {

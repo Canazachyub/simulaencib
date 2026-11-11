@@ -212,7 +212,7 @@ export function BanqueoAccess() {
         {/* Footer */}
         <footer className="p-4 text-center">
           <p className="text-sm text-purple-200">
-            SimulaENCIB - Banqueo Histórico
+            Simulacros SINAPSIS - Banqueo Histórico
           </p>
         </footer>
       </div>

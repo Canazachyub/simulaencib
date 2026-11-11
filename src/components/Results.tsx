@@ -10,8 +10,8 @@ import {
   Cell, LineChart, Line
 } from 'recharts';
 import { useExamStore } from '../hooks/useExam';
-import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES } from '../types';
-import { formatTimeReadable, formatNumber, formatDate, getColorForPercentage, indexToLetter, formatVigesimalScore } from '../utils/calculations';
+import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES, SITE_NAME } from '../types';
+import { formatTimeReadable, formatDate, getColorForPercentage, indexToLetter, formatVigesimalScore, formatPoints } from '../utils/calculations';
 import { PDFGenerator } from './PDFGenerator';
 import { saveScore, getUserHistory, type UserHistory } from '../services/api';
 import clsx from 'clsx';
@@ -48,8 +48,9 @@ export function Results() {
       const saveAndFetchHistory = async () => {
         setLoadingHistory(true);
 
-        // Guardar puntaje con formato ENCIB
+        // Guardar puntaje del examen (nota en su escala)
         await saveScore({
+          exam: result.examId,
           dni: result.student.dni,
           correctAnswers: result.correctAnswers,
           totalQuestions: result.totalQuestions,
@@ -61,7 +62,7 @@ export function Results() {
         await new Promise(resolve => setTimeout(resolve, 500));
 
         // Ahora sí obtener el historial actualizado
-        const history = await getUserHistory(result.student.dni);
+        const history = await getUserHistory(result.student.dni, result.examId);
         setUserHistory(history);
         setLoadingHistory(false);
       };
@@ -70,44 +71,17 @@ export function Results() {
     }
   }, [result, navigate]);
 
-  if (!result) return null;
-
-  const performanceInfo = PERFORMANCE_MESSAGES[result.performanceLevel];
-
-  // Obtener nombre de la universidad
-  const universityInfo = ALL_UNIVERSITIES.find(u => u.code === result.student.university);
-  const universityName = universityInfo ? universityInfo.name : result.student.university;
-
-  const chartData: ChartDataItem[] = result.courseResults.map((course) => ({
-    name: course.name.length > 15 ? course.name.slice(0, 15) + '...' : course.name,
-    fullName: course.name,
-    percentage: course.percentage,
-    correct: course.correctAnswers,
-    total: course.totalQuestions
-  }));
-
-  const handleRestart = () => {
-    resetExam();
-    navigate('/');
-  };
-
-  const totalCorrect = result.correctAnswers;
-  const totalQuestions = result.totalQuestions;
-  const averageTimePerQuestion = result.answers.length > 0
-    ? result.answers.reduce((sum, a) => sum + a.timeSpent, 0) / result.answers.length
-    : 0;
-
   // Datos para la revisión de preguntas
   const answerMap = useMemo(() => {
     const map = new Map<string, { selectedOption: number | null; isCorrect: boolean }>();
-    result.answers.forEach(answer => {
+    (result?.answers ?? []).forEach(answer => {
       map.set(answer.questionId, {
         selectedOption: answer.selectedOption,
         isCorrect: answer.isCorrect
       });
     });
     return map;
-  }, [result.answers]);
+  }, [result?.answers]);
 
   // Agrupar preguntas por curso para el navegador
   const questionsByCourse = useMemo(() => {
@@ -128,6 +102,42 @@ export function Results() {
 
     return groups;
   }, [questions, answerMap]);
+
+  if (!result) return null;
+
+  const scaleMax = result.scaleMax ?? 20;
+  const examName = result.examName ?? 'ENCIB';
+  const passing = result.passing ?? null;
+  const hasWeightedPoints = Math.abs((result.maxPoints ?? result.totalQuestions) - result.totalQuestions) > 0.001;
+
+  const performanceInfo = PERFORMANCE_MESSAGES[result.performanceLevel];
+
+  // Obtener nombre de la universidad
+  const universityInfo = ALL_UNIVERSITIES.find(u => u.code === result.student.university);
+  const universityName = universityInfo ? universityInfo.name : result.student.university;
+
+  const chartData: ChartDataItem[] = result.courseResults.map((course) => ({
+    name: course.name.length > 24 ? course.name.slice(0, 23) + '…' : course.name,
+    fullName: course.name,
+    percentage: course.percentage,
+    correct: course.correctAnswers,
+    total: course.totalQuestions
+  }));
+
+  // Con muchos cursos (p. ej. 32 especialidades) la barra se adelgaza
+  const chartBarSize = chartData.length > 20 ? 16 : chartData.length > 12 ? 22 : 32;
+  const chartRowHeight = chartBarSize + 14;
+
+  const handleRestart = () => {
+    resetExam();
+    navigate('/');
+  };
+
+  const totalCorrect = result.correctAnswers;
+  const totalQuestions = result.totalQuestions;
+  const averageTimePerQuestion = result.answers.length > 0
+    ? result.answers.reduce((sum, a) => sum + a.timeSpent, 0) / result.answers.length
+    : 0;
 
   const currentQuestion = questions[reviewIndex];
   const currentAnswer = currentQuestion ? answerMap.get(currentQuestion.id) : null;
@@ -152,21 +162,41 @@ export function Results() {
             <span className="font-semibold">{performanceInfo.title}</span>
           </div>
 
-          {/* Nota Vigesimal prominente */}
+          {/* Nota en la escala del examen */}
           <div className="mb-4">
-            <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Nota Vigesimal</h2>
+            <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">
+              Simulacro {examName} · Nota
+            </h2>
             <h1 className="text-5xl md:text-6xl font-extrabold text-cyan-600">
               {formatVigesimalScore(result.vigesimalScore)}
-              <span className="text-2xl text-slate-400 font-normal"> / 20</span>
+              <span className="text-2xl text-slate-400 font-normal"> / {scaleMax}</span>
             </h1>
+            {passing !== null && (
+              <div
+                className={clsx(
+                  'inline-flex items-center gap-2 mt-4 px-4 py-1.5 rounded-full text-sm font-bold',
+                  result.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                )}
+              >
+                {result.passed ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                {result.passed ? 'Aprobado' : 'Desaprobado'}
+                <span className="font-normal">(nota mínima {passing})</span>
+              </div>
+            )}
           </div>
 
-          {/* Puntaje bruto secundario */}
+          {/* Correctas y puntos */}
           <div className="mb-6">
             <p className="text-slate-600">
-              <span className="font-bold text-slate-800">{result.rawScore}</span> de {result.totalQuestions} respuestas correctas
+              <span className="font-bold text-slate-800">{result.correctAnswers}</span> de {result.totalQuestions} respuestas correctas
               <span className="text-slate-400 mx-2">|</span>
               {result.percentage.toFixed(1)}%
+              {hasWeightedPoints && (
+                <>
+                  <span className="text-slate-400 mx-2">|</span>
+                  {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)} puntos
+                </>
+              )}
             </p>
           </div>
 
@@ -505,7 +535,9 @@ export function Results() {
               {currentAnswer?.isCorrect ? (
                 <>
                   <CheckCircle className="w-5 h-5" />
-                  <span className="font-medium">Respuesta correcta (+1 punto)</span>
+                  <span className="font-medium">
+                    Respuesta correcta (+{formatPoints(currentQuestion.points)} {currentQuestion.points === 1 ? 'punto' : 'puntos'})
+                  </span>
                 </>
               ) : (
                 <>
@@ -576,13 +608,14 @@ export function Results() {
               Visualiza gráficamente tu desempeño en cada curso para identificar fortalezas y áreas de mejora
             </p>
           </div>
-          {/* Altura calculada: 45px por curso + padding */}
-          <div style={{ height: Math.max(400, chartData.length * 50 + 40) }} className="w-full">
+          {/* Barras horizontales; con muchos cursos se adelgaza la barra y se hace scroll */}
+          <div className={clsx('w-full', chartData.length > 14 && 'max-h-[640px] overflow-y-auto pr-1')}>
+          <div style={{ height: Math.max(320, chartData.length * chartRowHeight + 50) }} className="w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={chartData}
                 layout="vertical"
-                margin={{ top: 10, right: 40, left: 140, bottom: 10 }}
+                margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
                 <XAxis
@@ -597,7 +630,8 @@ export function Results() {
                   dataKey="name"
                   stroke="#64748B"
                   tick={{ fontSize: 11, fill: '#475569' }}
-                  width={135}
+                  width={170}
+                  interval={0}
                   tickLine={false}
                   axisLine={false}
                 />
@@ -621,7 +655,7 @@ export function Results() {
                 <Bar
                   dataKey="percentage"
                   radius={[0, 6, 6, 0]}
-                  barSize={32}
+                  barSize={chartBarSize}
                   background={{ fill: '#F1F5F9' }}
                 >
                   {chartData.map((entry, index) => (
@@ -630,6 +664,7 @@ export function Results() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+          </div>
           </div>
 
           {/* Leyenda de colores - Basado en respuestas correctas */}
@@ -722,9 +757,24 @@ export function Results() {
                     </span>
                   </td>
                 </tr>
+                {hasWeightedPoints && (
+                  <tr className="bg-cyan-50">
+                    <td colSpan={2} className="px-6 py-4 text-sm font-bold text-cyan-800">
+                      PUNTOS OBTENIDOS
+                    </td>
+                    <td className="px-6 py-4 text-center text-sm font-bold text-cyan-800">
+                      {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)}
+                    </td>
+                  </tr>
+                )}
                 <tr className="bg-cyan-100">
                   <td colSpan={2} className="px-6 py-4 text-sm font-bold text-cyan-800">
-                    NOTA VIGESIMAL
+                    NOTA (0-{scaleMax})
+                    {passing !== null && (
+                      <span className={clsx('ml-2 text-xs', result.passed ? 'text-emerald-700' : 'text-red-700')}>
+                        {result.passed ? 'Aprobado' : 'Desaprobado'}
+                      </span>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className="inline-flex px-3 py-1 text-lg font-bold rounded-full bg-cyan-600 text-white">
@@ -744,7 +794,7 @@ export function Results() {
           <div className="mb-6">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               <History className="w-5 h-5 text-cyan-600" />
-              Tu Historial de Simulacros
+              Tu Historial de Simulacros {examName}
             </h2>
             <p className="text-sm text-slate-500 mt-1">
               Visualiza tu progreso a lo largo del tiempo
@@ -798,7 +848,7 @@ export function Results() {
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                         <XAxis dataKey="intento" stroke="#94A3B8" fontSize={12} />
-                        <YAxis stroke="#94A3B8" fontSize={12} domain={[0, 20]} />
+                        <YAxis stroke="#94A3B8" fontSize={12} domain={[0, scaleMax]} />
                         <Tooltip
                           content={({ payload }) => {
                             if (!payload || payload.length === 0) return null;
@@ -806,7 +856,7 @@ export function Results() {
                             return (
                               <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-xl">
                                 <p className="font-bold text-slate-800">{data.intento}</p>
-                                <p className="text-cyan-600 font-semibold">{formatVigesimalScore(data.nota)} / 20</p>
+                                <p className="text-cyan-600 font-semibold">{formatVigesimalScore(data.nota)} / {scaleMax}</p>
                                 <p className="text-slate-500 text-sm">{data.correctas} correctas</p>
                               </div>
                             );
@@ -895,7 +945,7 @@ export function Results() {
 
         <p className="text-center text-slate-400 text-sm flex items-center justify-center gap-2">
           <Stethoscope className="w-4 h-4" />
-          SimulaENCIB - Examen Nacional de Ciencias Básicas
+          {SITE_NAME} - Simulacro {examName}
         </p>
       </div>
     </div>

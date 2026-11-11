@@ -1,6 +1,6 @@
 import { CheckCircle, XCircle } from 'lucide-react';
 import type { Question as QuestionType } from '../types';
-import { indexToLetter } from '../utils/calculations';
+import { indexToLetter, formatPoints } from '../utils/calculations';
 import clsx from 'clsx';
 
 /**
@@ -252,7 +252,7 @@ export function Question({
             {isCorrect ? (
               <>
                 <CheckCircle className="w-6 h-6 text-emerald-600" />
-                <span className="font-medium">¡Correcto! +{question.points.toFixed(2)} puntos</span>
+                <span className="font-medium">¡Correcto! +{formatPoints(question.points)} {question.points === 1 ? 'punto' : 'puntos'}</span>
               </>
             ) : (
               <>

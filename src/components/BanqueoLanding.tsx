@@ -231,16 +231,16 @@ export function BanqueoLanding() {
               <div className="bg-white rounded-xl p-6 border-2 border-cyan-200">
                 <div className="flex items-center gap-3 mb-4">
                   <BookOpen className="w-8 h-8 text-cyan-600" />
-                  <h3 className="text-xl font-bold text-cyan-700">Simulacro ENCIB</h3>
+                  <h3 className="text-xl font-bold text-cyan-700">Simulacro completo</h3>
                 </div>
                 <ul className="space-y-3">
                   <li className="flex items-start gap-2">
                     <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">100 preguntas completas</span>
+                    <span className="text-slate-600">Todas las preguntas del examen</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">3 horas de tiempo</span>
+                    <span className="text-slate-600">Tiempo oficial de cada examen</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
@@ -248,7 +248,7 @@ export function BanqueoLanding() {
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">8 cursos completos</span>
+                    <span className="text-slate-600">Todos los cursos del examen</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
@@ -287,7 +287,7 @@ export function BanqueoLanding() {
             <p className="flex items-center gap-2">
               <Brain className="w-5 h-5" />
               <span className="font-semibold text-white">Banqueo Histórico</span>
-              <span className="hidden sm:inline">- SimulaENCIB</span>
+              <span className="hidden sm:inline">- Simulacros SINAPSIS</span>
             </p>
             <p className="text-sm text-center md:text-right">
               Técnica Active Recall para mejor retención

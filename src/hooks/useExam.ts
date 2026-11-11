@@ -1,19 +1,131 @@
 import { create } from 'zustand';
+import { useEffect } from 'react';
 import type {
   ExamStore,
   Student,
   ExamConfig,
+  ExamMeta,
   Question,
   Answer,
   ExamResult
 } from '../types';
-import { getConfig, getQuestions, MOCK_CONFIG, generateMockQuestions } from '../services/api';
+import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_META } from '../types';
+import { getConfig, getQuestions, getExams } from '../services/api';
 import { calculateExamResult } from '../utils/calculations';
 
-// Determinar si usar mock o API real
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true' || !import.meta.env.VITE_API_URL;
+// ============================================
+// EXAMEN SELECCIONADO (persistido en sessionStorage, o ?examen=<id> en la URL)
+// ============================================
+const EXAM_STORAGE_KEY = 'simulacro_exam';
+
+function readStoredExamId(): string | null {
+  try {
+    return sessionStorage.getItem(EXAM_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeExamId(examId: string) {
+  try {
+    sessionStorage.setItem(EXAM_STORAGE_KEY, examId);
+  } catch {
+    // sessionStorage no disponible (modo privado, etc.)
+  }
+}
+
+/** Lee ?examen=<id> (o ?exam=<id>) de la URL actual. */
+export function readExamFromUrl(search: string = typeof window !== 'undefined' ? window.location.search : ''): string | null {
+  const params = new URLSearchParams(search);
+  const value = params.get('examen') || params.get('exam');
+  return value ? value.toLowerCase().trim() : null;
+}
+
+function initialExamId(): string {
+  const fromUrl = readExamFromUrl();
+  if (fromUrl) {
+    storeExamId(fromUrl);
+    return fromUrl;
+  }
+  return readStoredExamId() || DEFAULT_EXAM_ID;
+}
+
+/** Configuración mínima a partir de los datos del examen (si la config no está cargada). */
+function configFromMeta(meta: ExamMeta, questions: Question[]): ExamConfig {
+  const courses: ExamConfig['courses'] = [];
+  questions.forEach(q => {
+    const existing = courses.find(c => c.name === q.subject);
+    if (existing) existing.questionCount += 1;
+    else courses.push({ code: courses.length + 1, name: q.subject, questionCount: 1, points: q.points || 1 });
+  });
+  return {
+    id: meta.id,
+    nombre: meta.nombre,
+    descripcion: meta.descripcion,
+    durationMinutes: meta.durationMinutes,
+    alternatives: meta.alternatives,
+    scaleMax: meta.scaleMax,
+    passing: meta.passing,
+    fuente: meta.fuente,
+    totalQuestions: questions.length,
+    maxScore: questions.reduce((s, q) => s + (q.points || 1), 0),
+    courses
+  };
+}
+
+let examsPromise: Promise<void> | null = null;
 
 export const useExamStore = create<ExamStore>((set, get) => ({
+  // Catálogo de exámenes (hasta saber qué soporta el backend, solo ENCIB)
+  exams: [ENCIB_FALLBACK_META],
+  examsLoaded: false,
+  multiExam: false,
+  selectedExamId: initialExamId(),
+
+  // Cargar el catálogo de exámenes (una sola vez)
+  loadExams: () => {
+    if (!examsPromise) {
+      examsPromise = (async () => {
+        const catalog = await getExams();
+        const available = catalog.exams.filter(e => e.available);
+        const exams = available.length > 0 ? available : [ENCIB_FALLBACK_META];
+        const current = get().selectedExamId;
+        const valid = exams.some(e => e.id === current);
+        const selectedExamId = valid ? current : (exams.find(e => e.id === DEFAULT_EXAM_ID)?.id ?? exams[0].id);
+        if (!valid) {
+          storeExamId(selectedExamId);
+        }
+        set({
+          exams,
+          examsLoaded: true,
+          multiExam: catalog.multiExam,
+          selectedExamId,
+          // Si el examen cambió, la config cargada ya no sirve
+          ...(get().config && get().config!.id !== selectedExamId ? { config: null } : {})
+        });
+      })();
+    }
+    return examsPromise;
+  },
+
+  // Cambiar de examen
+  selectExam: (examId: string) => {
+    const id = examId.toLowerCase();
+    const { exams, examsLoaded, selectedExamId } = get();
+    // Con el catálogo ya cargado, solo se aceptan exámenes disponibles
+    if (examsLoaded && !exams.some(e => e.id === id)) return;
+    storeExamId(id);
+    if (id === selectedExamId) return;
+    set({
+      selectedExamId: id,
+      config: null,
+      questions: [],
+      result: null,
+      status: 'idle',
+      error: null
+    });
+  },
+
   // Estado inicial
   status: 'idle',
   student: null,
@@ -31,23 +143,19 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     set({ student });
   },
 
-  // Cargar configuración del examen ENCIB
+  // Cargar configuración del examen seleccionado
   loadConfig: async () => {
+    await get().loadExams();
+    const examId = get().selectedExamId;
     set({ status: 'loading', error: null });
 
     try {
-      let config: ExamConfig;
-
-      if (USE_MOCK) {
-        // Simular delay de red
-        await new Promise(resolve => setTimeout(resolve, 500));
-        config = MOCK_CONFIG;
-      } else {
-        config = await getConfig();
-      }
-
-      set({ config, status: 'idle' });
+      const config: ExamConfig = await getConfig(examId);
+      // Ignorar respuestas de un examen que ya no está seleccionado
+      if (get().selectedExamId !== examId) return;
+      set({ config: { ...config, id: examId }, status: 'idle' });
     } catch (error) {
+      if (get().selectedExamId !== examId) return;
       set({
         status: 'error',
         error: error instanceof Error ? error.message : 'Error al cargar configuración'
@@ -55,21 +163,17 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     }
   },
 
-  // Cargar preguntas del examen ENCIB (sin parámetro de área)
+  // Cargar preguntas del examen seleccionado
   loadQuestions: async () => {
+    const examId = get().selectedExamId;
     set({ status: 'loading', error: null });
 
     try {
-      let questions: Question[];
-
-      if (USE_MOCK) {
-        // Simular delay de red
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        questions = generateMockQuestions();
-      } else {
-        questions = await getQuestions();
+      const questions: Question[] = await getQuestions(examId);
+      if (get().selectedExamId !== examId) return;
+      if (questions.length === 0) {
+        throw new Error('No hay preguntas disponibles para este examen por ahora.');
       }
-
       set({ questions, status: 'ready' });
     } catch (error) {
       set({
@@ -146,7 +250,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
 
   // Finalizar el examen y calcular resultados
   finishExam: () => {
-    const { student, questions, savedAnswers, startTime } = get();
+    const { student, questions, savedAnswers, startTime, config, exams, selectedExamId } = get();
 
     if (!student || !startTime) return;
 
@@ -166,12 +270,16 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       };
     });
 
-    // Calcular resultado del examen ENCIB (sin areaConfig)
+    // Calcular resultado con la configuración del examen (escala, nota mínima, orden de cursos)
+    const examConfig = config && config.id === selectedExamId
+      ? config
+      : configFromMeta(exams.find(e => e.id === selectedExamId) ?? ENCIB_FALLBACK_META, questions);
     const result: ExamResult = calculateExamResult(
       student,
       questions,
       evaluatedAnswers,
-      startTime
+      startTime,
+      examConfig
     );
 
     set({ status: 'completed', result, answers: evaluatedAnswers });
@@ -232,4 +340,23 @@ export function useIsFirstQuestion() {
 export function useSavedAnswer(questionId: string) {
   const savedAnswers = useExamStore(state => state.savedAnswers);
   return savedAnswers.get(questionId) ?? null;
+}
+
+/** Datos del examen seleccionado (meta del catálogo). */
+export function useSelectedExam(): ExamMeta {
+  const exams = useExamStore(state => state.exams);
+  const selectedExamId = useExamStore(state => state.selectedExamId);
+  return exams.find(e => e.id === selectedExamId) ?? exams[0] ?? ENCIB_FALLBACK_META;
+}
+
+/** Carga el catálogo de exámenes al montar el componente. */
+export function useExamCatalog() {
+  const loadExams = useExamStore(state => state.loadExams);
+  const exams = useExamStore(state => state.exams);
+  const examsLoaded = useExamStore(state => state.examsLoaded);
+  const multiExam = useExamStore(state => state.multiExam);
+  useEffect(() => {
+    loadExams();
+  }, [loadExams]);
+  return { exams, examsLoaded, multiExam };
 }

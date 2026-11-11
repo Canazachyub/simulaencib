@@ -1,17 +1,13 @@
 // ============================================
-// TIPOS PRINCIPALES DEL SISTEMA - SimulaENCIB
+// TIPOS PRINCIPALES DEL SISTEMA - Simulacros SINAPSIS (multi-examen)
 // ============================================
 
-// Cursos del ENCIB (8 cursos de ciencias básicas)
-export type CourseType =
-  | 'Anatomía'
-  | 'Embriología'
-  | 'Histología'
-  | 'Bioquímica'
-  | 'Fisiología'
-  | 'Patología'
-  | 'Farmacología'
-  | 'Microbiología-Parasitología';
+// Nombre de un curso/área. Cada examen define sus propios cursos en su configuración
+// (ENCIB: 8 cursos de ciencias básicas; RM: hasta 32 especialidades, etc.).
+export type CourseType = string;
+
+// Identificador de examen (encib, enam, rm, serums, essalud...)
+export type ExamId = string;
 
 // Estados del examen
 export type ExamStatus = 'idle' | 'loading' | 'ready' | 'in_progress' | 'completed' | 'error';
@@ -32,20 +28,45 @@ export interface Course {
   code: number;
   name: CourseType;
   questionCount: number;
-  // En ENCIB cada pregunta vale 1 punto, no hay ponderación
+  points: number; // Puntos por pregunta (ENCIB 1, ENAM 0.111111, RM 0.4, ...)
 }
 
+/** Datos generales de un examen (respuesta de ?action=exams). */
+export interface ExamMeta {
+  id: ExamId;
+  nombre: string;
+  descripcion: string;
+  durationMinutes: number;
+  alternatives: number;
+  scaleMax: number; // Escala de la nota (20, 80, ...)
+  passing: number | null; // Nota mínima aprobatoria (null = sin nota mínima)
+  fuente: string;
+  totalQuestions: number;
+  courseCount: number;
+  available: boolean;
+}
+
+/** Configuración completa de un examen (respuesta de ?action=config&exam=<id>). */
 export interface ExamConfig {
+  id: ExamId;
+  nombre: string;
+  descripcion: string;
+  durationMinutes: number;
+  alternatives: number;
+  scaleMax: number;
+  passing: number | null;
+  fuente: string;
+  totalQuestions: number;
+  maxScore: number; // Suma de puntos de todas las preguntas
   courses: Course[];
-  totalQuestions: number; // 100
-  maxScore: number; // 100 (1 punto por pregunta)
 }
 
 // ============================================
 // PREGUNTAS Y OPCIONES
 // ============================================
 export interface QuestionMetadata {
-  numero?: string | number;
+  numero?: string | number | null;
+  curso?: string | null;
   tema?: string;
   subtema?: string;
 }
@@ -59,8 +80,8 @@ export interface Question {
   correctAnswer: number; // Índice 0-based de la respuesta correcta
   timeSeconds: number;
   imageLink: string | null;
-  subject: string; // Nombre del curso (CourseType)
-  points: number; // Siempre 1 en ENCIB
+  subject: string; // Nombre del curso/área según la configuración del examen
+  points: number; // Puntos de la pregunta (varía por examen)
   sourceFile?: string | null;
   justification?: string | null; // Explicación de la respuesta correcta
   metadata?: QuestionMetadata;
@@ -84,17 +105,24 @@ export interface CourseResult {
   correctAnswers: number;
   totalQuestions: number;
   percentage: number;
-  // No hay puntos ponderados en ENCIB - cada correcta = 1 punto
+  pointsEarned: number;
+  pointsTotal: number;
 }
 
 export interface ExamResult {
+  examId: ExamId;
+  examName: string;
+  scaleMax: number; // Escala de la nota
+  passing: number | null; // Nota mínima aprobatoria
+  passed: boolean | null; // null si el examen no tiene nota mínima
   student: Student;
   date: Date;
-  correctAnswers: number; // Total de respuestas correctas (0-100)
-  totalQuestions: number; // 100
-  rawScore: number; // Puntaje bruto (= correctAnswers)
-  vigesimalScore: number; // Nota vigesimal (0-20)
-  percentage: number; // Porcentaje (0-100)
+  correctAnswers: number; // Total de respuestas correctas
+  totalQuestions: number;
+  rawScore: number; // Puntos obtenidos (suma de points de las correctas)
+  maxPoints: number; // Suma de points de todas las preguntas
+  vigesimalScore: number; // Nota en la escala del examen (0..scaleMax), 2 decimales
+  percentage: number; // Porcentaje de correctas (0-100)
   courseResults: CourseResult[];
   answers: Answer[];
   totalTime: number; // Tiempo total en segundos
@@ -112,6 +140,14 @@ export interface SavedAnswer {
 }
 
 export interface ExamStore {
+  // Catálogo de exámenes
+  exams: ExamMeta[];
+  examsLoaded: boolean;
+  multiExam: boolean; // false = backend viejo (solo ENCIB)
+  selectedExamId: ExamId;
+  loadExams: () => Promise<void>;
+  selectExam: (examId: ExamId) => void;
+
   // Estado
   status: ExamStatus;
   student: Student | null;
@@ -127,7 +163,7 @@ export interface ExamStore {
   // Acciones
   setStudent: (student: Student) => void;
   loadConfig: () => Promise<void>;
-  loadQuestions: () => Promise<void>; // Sin parámetro de área
+  loadQuestions: () => Promise<void>; // Preguntas del examen seleccionado
   startExam: () => void;
   saveAnswer: (questionId: string, selectedOption: number | null) => void;
   answerQuestion: (questionId: string, selectedOption: number | null, timeSpent: number) => void;
@@ -176,7 +212,7 @@ export interface ResultCardProps {
 }
 
 // ============================================
-// CONSTANTES - CURSOS ENCIB
+// CONSTANTES - CURSOS ENCIB (solo como respaldo cuando el backend no es multi-examen)
 // ============================================
 export const COURSES: CourseType[] = [
   'Anatomía',
@@ -288,24 +324,24 @@ export const UNIVERSITIES_BY_REGION: Record<string, { code: string; name: string
 export const ALL_UNIVERSITIES = Object.values(UNIVERSITIES_BY_REGION).flat();
 
 // ============================================
-// UMBRALES DE RENDIMIENTO (basado en correctas de 100)
+// UMBRALES DE RENDIMIENTO (porcentaje de respuestas correctas)
 // ============================================
 export const PERFORMANCE_THRESHOLDS = {
-  excellent: 80, // ≥ 80 correctas = ≥ 16/20
-  good: 60,      // ≥ 60 correctas = ≥ 12/20
-  regular: 50,   // ≥ 50 correctas = ≥ 10/20
-  // needs_practice: < 50 correctas = < 10/20
+  excellent: 80, // ≥ 80%
+  good: 60,      // ≥ 60%
+  regular: 50,   // ≥ 50%
+  // needs_practice: < 50%
 };
 
 export const PERFORMANCE_MESSAGES: Record<PerformanceLevel, { title: string; message: string; color: string }> = {
   excellent: {
     title: '¡Excelente!',
-    message: 'Tu preparación es sobresaliente. Estás muy bien preparado para el ENCIB.',
+    message: 'Tu preparación es sobresaliente. Estás muy bien preparado para el examen.',
     color: 'emerald'
   },
   good: {
     title: '¡Buen trabajo!',
-    message: 'Tienes una buena base en ciencias básicas. Con un poco más de práctica alcanzarás la excelencia.',
+    message: 'Tienes una buena base. Con un poco más de práctica alcanzarás la excelencia.',
     color: 'blue'
   },
   regular: {
@@ -315,7 +351,7 @@ export const PERFORMANCE_MESSAGES: Record<PerformanceLevel, { title: string; mes
   },
   needs_practice: {
     title: 'Necesitas practicar',
-    message: 'Es importante dedicar más tiempo al estudio de ciencias básicas. No te desanimes, cada práctica suma.',
+    message: 'Es importante dedicar más tiempo al estudio. No te desanimes, cada práctica suma.',
     color: 'red'
   }
 };
@@ -341,3 +377,46 @@ export const ENCIB_INFO = {
     baja: { min: 24, max: 48, percentage: '25-40%' }
   }
 };
+
+// ============================================
+// RESPALDO ENCIB (backend viejo sin ?action=exams)
+// ============================================
+export const DEFAULT_EXAM_ID: ExamId = 'encib';
+
+export const ENCIB_FALLBACK_COURSES: Course[] = COURSES.map((name, i) => ({
+  code: i + 1,
+  name,
+  questionCount: COURSE_CONFIG[name].questionCount,
+  points: 1
+}));
+
+export const ENCIB_FALLBACK_META: ExamMeta = {
+  id: 'encib',
+  nombre: 'ENCIB',
+  descripcion: 'Examen Nacional de Ciencias Básicas (ASPEFAM)',
+  durationMinutes: 120,
+  alternatives: 4,
+  scaleMax: 20,
+  passing: null,
+  fuente: 'Tabla de especificaciones ENCIB (ASPEFAM)',
+  totalQuestions: 100,
+  courseCount: ENCIB_FALLBACK_COURSES.length,
+  available: true
+};
+
+export const ENCIB_FALLBACK_CONFIG: ExamConfig = {
+  id: ENCIB_FALLBACK_META.id,
+  nombre: ENCIB_FALLBACK_META.nombre,
+  descripcion: ENCIB_FALLBACK_META.descripcion,
+  durationMinutes: ENCIB_FALLBACK_META.durationMinutes,
+  alternatives: ENCIB_FALLBACK_META.alternatives,
+  scaleMax: ENCIB_FALLBACK_META.scaleMax,
+  passing: ENCIB_FALLBACK_META.passing,
+  fuente: ENCIB_FALLBACK_META.fuente,
+  totalQuestions: 100,
+  maxScore: 100,
+  courses: ENCIB_FALLBACK_COURSES
+};
+
+// Marca del sitio
+export const SITE_NAME = 'Simulacros SINAPSIS';

@@ -3,121 +3,182 @@ import type {
   Answer,
   CourseResult,
   ExamResult,
+  ExamConfig,
   Student,
   PerformanceLevel
 } from '../types';
-import { PERFORMANCE_THRESHOLDS } from '../types';
+import { PERFORMANCE_THRESHOLDS, ENCIB_FALLBACK_CONFIG } from '../types';
 
-/**
- * Calcula la nota vigesimal (0-20) a partir de las respuestas correctas
- * Fórmula: nota = correctas / 5 (o equivalentemente: correctas * 20 / 100)
- */
-export function calculateVigesimalScore(correctAnswers: number, totalQuestions: number = 100): number {
-  const vigesimal = (correctAnswers / totalQuestions) * 20;
-  return Math.round(vigesimal * 100) / 100; // 2 decimales
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function questionPoints(question: Question): number {
+  const p = Number(question.points);
+  return Number.isFinite(p) && p > 0 ? p : 1;
 }
 
 /**
- * Calcula los resultados por curso (ENCIB tiene 8 cursos)
+ * Calcula la nota en la escala del examen.
+ * nota = (puntos obtenidos / puntos posibles) × scaleMax, con 2 decimales.
+ */
+export function calculateScaledScore(pointsEarned: number, pointsTotal: number, scaleMax: number = 20): number {
+  if (pointsTotal <= 0) return 0;
+  return round2((pointsEarned / pointsTotal) * scaleMax);
+}
+
+/**
+ * Compatibilidad: nota vigesimal a partir de correctas (todas las preguntas valen lo mismo)
+ */
+export function calculateVigesimalScore(correctAnswers: number, totalQuestions: number = 100): number {
+  return calculateScaledScore(correctAnswers, totalQuestions, 20);
+}
+
+/**
+ * Calcula los resultados por curso. El orden sale de la configuración del examen;
+ * los cursos que no estén en la configuración van al final en orden de aparición.
  */
 export function calculateCourseResults(
   questions: Question[],
-  answers: Answer[]
+  answers: Answer[],
+  courseOrder: string[] = []
 ): CourseResult[] {
-  // Agrupar preguntas por curso
-  const courseGroups = new Map<string, { questions: Question[]; answers: Answer[] }>();
+  const answerById = new Map(answers.map(a => [a.questionId, a]));
+  const groups = new Map<string, CourseResult>();
 
   questions.forEach((question) => {
-    if (!courseGroups.has(question.subject)) {
-      courseGroups.set(question.subject, { questions: [], answers: [] });
+    let group = groups.get(question.subject);
+    if (!group) {
+      group = {
+        name: question.subject,
+        correctAnswers: 0,
+        totalQuestions: 0,
+        percentage: 0,
+        pointsEarned: 0,
+        pointsTotal: 0
+      };
+      groups.set(question.subject, group);
     }
-    courseGroups.get(question.subject)!.questions.push(question);
-  });
-
-  // Asociar respuestas con sus preguntas
-  answers.forEach((answer) => {
-    const question = questions.find(q => q.id === answer.questionId);
-    if (question && courseGroups.has(question.subject)) {
-      courseGroups.get(question.subject)!.answers.push(answer);
+    const pts = questionPoints(question);
+    group.totalQuestions += 1;
+    group.pointsTotal += pts;
+    if (answerById.get(question.id)?.isCorrect) {
+      group.correctAnswers += 1;
+      group.pointsEarned += pts;
     }
   });
 
-  // Calcular resultados por curso
-  const results: CourseResult[] = [];
+  const results = Array.from(groups.values()).map(g => ({
+    ...g,
+    pointsEarned: round2(g.pointsEarned),
+    pointsTotal: round2(g.pointsTotal),
+    percentage: g.totalQuestions > 0 ? round2((g.correctAnswers / g.totalQuestions) * 100) : 0
+  }));
 
-  courseGroups.forEach((data, courseName) => {
-    const correctAnswers = data.answers.filter(a => a.isCorrect).length;
-    const totalQuestions = data.questions.length;
-    const percentage = totalQuestions > 0 ? (correctAnswers / totalQuestions) * 100 : 0;
+  const firstSeen = new Map(results.map((r, i) => [r.name, i]));
+  const orderIndex = (name: string) => {
+    const idx = courseOrder.indexOf(name);
+    return idx === -1 ? courseOrder.length + (firstSeen.get(name) ?? 0) : idx;
+  };
 
-    results.push({
-      name: courseName,
-      correctAnswers,
-      totalQuestions,
-      percentage: Math.round(percentage * 100) / 100
-      // No hay puntos ponderados en ENCIB - cada correcta = 1 punto
-    });
-  });
-
-  // Ordenar por nombre de curso (mantener orden del examen)
-  const courseOrder = [
-    'Anatomía', 'Embriología', 'Histología', 'Bioquímica',
-    'Fisiología', 'Patología', 'Farmacología', 'Microbiología-Parasitología'
-  ];
-
-  return results.sort((a, b) => {
-    const indexA = courseOrder.indexOf(a.name);
-    const indexB = courseOrder.indexOf(b.name);
-    if (indexA === -1) return 1;
-    if (indexB === -1) return -1;
-    return indexA - indexB;
-  });
+  return results.sort((a, b) => orderIndex(a.name) - orderIndex(b.name));
 }
 
 /**
- * Determina el nivel de rendimiento según las respuestas correctas
- * Basado en: ≥80 Excelente, ≥60 Bueno, ≥50 Regular, <50 Necesita práctica
+ * Determina el nivel de rendimiento según el porcentaje de respuestas correctas
+ * ≥80% Excelente, ≥60% Bueno, ≥50% Regular, <50% Necesita práctica
  */
-export function getPerformanceLevel(correctAnswers: number): PerformanceLevel {
-  if (correctAnswers >= PERFORMANCE_THRESHOLDS.excellent) return 'excellent';
-  if (correctAnswers >= PERFORMANCE_THRESHOLDS.good) return 'good';
-  if (correctAnswers >= PERFORMANCE_THRESHOLDS.regular) return 'regular';
+export function getPerformanceLevel(percentage: number): PerformanceLevel {
+  if (percentage >= PERFORMANCE_THRESHOLDS.excellent) return 'excellent';
+  if (percentage >= PERFORMANCE_THRESHOLDS.good) return 'good';
+  if (percentage >= PERFORMANCE_THRESHOLDS.regular) return 'regular';
   return 'needs_practice';
 }
 
 /**
- * Calcula el resultado completo del examen ENCIB
+ * Calcula el resultado completo del simulacro para el examen indicado
  */
 export function calculateExamResult(
   student: Student,
   questions: Question[],
   answers: Answer[],
-  startTime: Date
+  startTime: Date,
+  config: ExamConfig = ENCIB_FALLBACK_CONFIG
 ): ExamResult {
-  const courseResults = calculateCourseResults(questions, answers);
+  const courseResults = calculateCourseResults(
+    questions,
+    answers,
+    config.courses.map(c => c.name)
+  );
 
-  // Calcular totales
-  const correctAnswers = answers.filter(a => a.isCorrect).length;
-  const totalQuestions = questions.length; // 100
-  const rawScore = correctAnswers; // 1 punto por correcta
-  const vigesimalScore = calculateVigesimalScore(correctAnswers, totalQuestions);
-  const percentage = (correctAnswers / totalQuestions) * 100;
+  const answerById = new Map(answers.map(a => [a.questionId, a]));
+  let pointsEarned = 0;
+  let pointsTotal = 0;
+  let correctAnswers = 0;
+  questions.forEach((q) => {
+    const pts = questionPoints(q);
+    pointsTotal += pts;
+    if (answerById.get(q.id)?.isCorrect) {
+      pointsEarned += pts;
+      correctAnswers += 1;
+    }
+  });
+
+  const totalQuestions = questions.length;
+  const scaleMax = config.scaleMax > 0 ? config.scaleMax : 20;
+  const score = calculateScaledScore(pointsEarned, pointsTotal, scaleMax);
+  const percentage = totalQuestions > 0 ? (correctAnswers / totalQuestions) * 100 : 0;
+  const passing = config.passing ?? null;
 
   const totalTime = Math.round((new Date().getTime() - startTime.getTime()) / 1000);
 
   return {
+    examId: config.id,
+    examName: config.nombre,
+    scaleMax,
+    passing,
+    passed: passing === null ? null : score >= passing,
     student,
     date: new Date(),
     correctAnswers,
     totalQuestions,
-    rawScore,
-    vigesimalScore,
-    percentage: Math.round(percentage * 100) / 100,
+    rawScore: round2(pointsEarned),
+    maxPoints: round2(pointsTotal),
+    vigesimalScore: score,
+    percentage: round2(percentage),
     courseResults,
     answers,
     totalTime,
-    performanceLevel: getPerformanceLevel(correctAnswers)
+    performanceLevel: getPerformanceLevel(percentage)
   };
+}
+
+/**
+ * Formatea una duración en minutos (ej: 120 -> "2 horas", 90 -> "1 h 30 min")
+ */
+export function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m} minutos`;
+  if (m === 0) return h === 1 ? '1 hora' : `${h} horas`;
+  return `${h} h ${m} min`;
+}
+
+/**
+ * Formato corto de duración (ej: 120 -> "2h", 90 -> "1h 30m")
+ */
+export function formatDurationShort(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/**
+ * Formatea puntos con hasta 2 decimales (1 -> "1", 0.111111 -> "0.11")
+ */
+export function formatPoints(points: number): string {
+  return Number.isInteger(points) ? String(points) : points.toFixed(2);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Brain, ArrowLeft, Loader2, CheckCircle, XCircle, ChevronRight,
   RefreshCw, Home, AlertCircle
@@ -7,6 +7,14 @@ import {
 import { getBanqueoQuestions, BanqueoQuestion } from '../services/api';
 
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
+
+function readStoredBanqueoExam(): string | null {
+  try {
+    return sessionStorage.getItem('banqueo_exam');
+  } catch {
+    return null;
+  }
+}
 
 interface QuestionState {
   answered: boolean;
@@ -18,6 +26,8 @@ export function BanqueoPractice() {
   const navigate = useNavigate();
   const { curso } = useParams<{ curso: string }>();
   const courseName = decodeURIComponent(curso || '');
+  const [searchParams] = useSearchParams();
+  const examId = (searchParams.get('examen') || readStoredBanqueoExam() || 'encib').toLowerCase();
 
   const [questions, setQuestions] = useState<BanqueoQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -36,13 +46,13 @@ export function BanqueoPractice() {
     }
 
     loadQuestions();
-  }, [courseName, navigate]);
+  }, [courseName, examId, navigate]);
 
   const loadQuestions = async () => {
     setLoading(true);
     setError('');
     try {
-      const result = await getBanqueoQuestions(courseName);
+      const result = await getBanqueoQuestions(courseName, examId);
       if (result.error) {
         setError(result.error);
       } else {

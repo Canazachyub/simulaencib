@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useExamStore, useCurrentQuestion, useProgress, useIsLastQuestion, useIsFirstQuestion } from '../hooks/useExam';
+import { useExamStore, useCurrentQuestion, useProgress, useIsLastQuestion, useIsFirstQuestion, useSelectedExam } from '../hooks/useExam';
+import { formatDuration } from '../utils/calculations';
 import { useTimer, formatTime } from '../hooks/useTimer';
 import { Question } from './Question';
 import {
@@ -9,8 +10,8 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
-// Duración del examen: 3 horas = 10800 segundos
-const EXAM_DURATION_SECONDS = 3 * 60 * 60;
+// Duración por defecto si no hay configuración (ENCIB oficial: 2 horas)
+const DEFAULT_DURATION_MINUTES = 120;
 
 export function Quiz() {
   const navigate = useNavigate();
@@ -25,8 +26,14 @@ export function Quiz() {
     nextQuestion,
     previousQuestion,
     goToQuestion,
-    finishExam
+    finishExam,
+    config
   } = useExamStore();
+  const exam = useSelectedExam();
+
+  // Duración del examen seleccionado (minutos -> segundos)
+  const durationMinutes = (config && config.id === exam.id ? config.durationMinutes : exam.durationMinutes) || DEFAULT_DURATION_MINUTES;
+  const examDurationSeconds = Math.round(durationMinutes * 60);
 
   const currentQuestion = useCurrentQuestion();
   const progress = useProgress();
@@ -46,9 +53,9 @@ export function Quiz() {
     }
   }, []);
 
-  // Temporizador de cuenta regresiva de 3 horas
+  // Temporizador de cuenta regresiva con la duración del examen
   const { timeRemaining, isWarning, start: startTimer } = useTimer({
-    initialTime: EXAM_DURATION_SECONDS,
+    initialTime: examDurationSeconds,
     onTimeout: handleTimeout,
     autoStart: false
   });
@@ -57,7 +64,7 @@ export function Quiz() {
   const formattedTime = formatTime(timeRemaining);
 
   // Calcular tiempo transcurrido (para mostrar en resultados)
-  const elapsedTime = EXAM_DURATION_SECONDS - timeRemaining;
+  const elapsedTime = examDurationSeconds - timeRemaining;
 
   // Calcular preguntas contestadas y sin contestar
   const { answeredCount, unansweredCount, unansweredIndexes } = useMemo(() => {
@@ -165,7 +172,7 @@ export function Quiz() {
               </div>
             </div>
 
-            {/* Timer global - Cuenta regresiva de 3 horas */}
+            {/* Timer global - Cuenta regresiva con la duración del examen */}
             <div className={clsx(
               'flex items-center gap-3 px-5 py-2.5 rounded-2xl bg-white border-2 shadow-lg transition-all',
               isWarning || timeRemaining <= 300 // Últimos 5 minutos
@@ -377,7 +384,7 @@ export function Quiz() {
                 ¡Tiempo Agotado!
               </h3>
               <p className="text-slate-600">
-                Se acabaron las <strong>3 horas</strong> del examen.
+                Se acabó el tiempo del examen {exam.nombre} (<strong>{formatDuration(durationMinutes)}</strong>).
                 Tu examen será calificado con las respuestas que hayas marcado.
               </p>
             </div>
