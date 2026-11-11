@@ -404,6 +404,20 @@ export const ENCIB_FALLBACK_META: ExamMeta = {
   available: true
 };
 
+const upcoming = (id: string, nombre: string, descripcion: string, durationMinutes: number, alternatives: number,
+  scaleMax: number, passing: number | null, totalQuestions: number): ExamMeta => ({
+  id, nombre, descripcion, durationMinutes, alternatives, scaleMax, passing,
+  fuente: '', totalQuestions, courseCount: 0, available: false
+});
+
+/** Exámenes que se muestran aunque el backend aún no los sirva (salen como "Próximamente"). */
+export const UPCOMING_EXAMS: ExamMeta[] = [
+  upcoming('enam', 'ENAM', 'Examen Nacional de Medicina (ASPEFAM)', 180, 4, 20, 11, 180),
+  upcoming('rm', 'Residentado Médico', 'Admisión al Residentado (CONAREME)', 240, 4, 80, null, 200),
+  upcoming('serums', 'SERUMS (ENCAPS)', 'Evaluación para el SERUMS (MINSA)', 120, 4, 20, null, 100),
+  upcoming('essalud', 'Internado EsSalud', 'Ingreso al Internado Médico EsSalud', 180, 5, 20, 13, 100)
+];
+
 export const ENCIB_FALLBACK_CONFIG: ExamConfig = {
   id: ENCIB_FALLBACK_META.id,
   nombre: ENCIB_FALLBACK_META.nombre,

@@ -87,11 +87,11 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     if (!examsPromise) {
       examsPromise = (async () => {
         const catalog = await getExams();
-        const available = catalog.exams.filter(e => e.available);
-        const exams = available.length > 0 ? available : [ENCIB_FALLBACK_META];
+        const exams = catalog.exams.some(e => e.available) ? catalog.exams : [ENCIB_FALLBACK_META];
+        const available = exams.filter(e => e.available);
         const current = get().selectedExamId;
-        const valid = exams.some(e => e.id === current);
-        const selectedExamId = valid ? current : (exams.find(e => e.id === DEFAULT_EXAM_ID)?.id ?? exams[0].id);
+        const valid = available.some(e => e.id === current);
+        const selectedExamId = valid ? current : (available.find(e => e.id === DEFAULT_EXAM_ID)?.id ?? available[0].id);
         if (!valid) {
           storeExamId(selectedExamId);
         }
@@ -113,7 +113,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     const id = examId.toLowerCase();
     const { exams, examsLoaded, selectedExamId } = get();
     // Con el catálogo ya cargado, solo se aceptan exámenes disponibles
-    if (examsLoaded && !exams.some(e => e.id === id)) return;
+    if (examsLoaded && !exams.some(e => e.id === id && e.available)) return;
     storeExamId(id);
     if (id === selectedExamId) return;
     set({

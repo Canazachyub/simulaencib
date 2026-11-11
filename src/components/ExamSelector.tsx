@@ -21,14 +21,18 @@ export function ExamSelector({ exams, selectedId, onSelect, variant = 'dark' }: 
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
       {exams.map((exam) => {
         const selected = exam.id === selectedId;
+        const disabled = !exam.available;
         return (
           <button
             key={exam.id}
             type="button"
-            onClick={() => onSelect(exam.id)}
+            onClick={() => !disabled && onSelect(exam.id)}
+            disabled={disabled}
             aria-pressed={selected}
+            title={disabled ? 'Próximamente' : undefined}
             className={clsx(
               'relative text-left rounded-xl p-3 md:p-4 transition-all duration-200 border-2',
+              disabled && 'opacity-60 cursor-not-allowed',
               variant === 'dark'
                 ? selected
                   ? 'bg-white text-cyan-800 border-white shadow-xl'
@@ -47,6 +51,16 @@ export function ExamSelector({ exams, selectedId, onSelect, variant = 'dark' }: 
               />
             )}
             <p className="font-bold text-sm md:text-base leading-tight pr-5">{exam.nombre}</p>
+            {disabled && (
+              <span
+                className={clsx(
+                  'mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                  variant === 'dark' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                )}
+              >
+                Próximamente
+              </span>
+            )}
             <div
               className={clsx(
                 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs',

@@ -1,5 +1,5 @@
 import type { ApiResponse, ExamConfig, ExamMeta, Question, Course } from '../types';
-import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_CONFIG, ENCIB_FALLBACK_META } from '../types';
+import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_CONFIG, ENCIB_FALLBACK_META, UPCOMING_EXAMS } from '../types';
 
 // ============================================
 // CONFIGURACIÓN DE LA API - Simulacros SINAPSIS (multi-examen)
@@ -56,7 +56,7 @@ export interface ExamCatalog {
   multiExam: boolean;
 }
 
-const ENCIB_ONLY_CATALOG: ExamCatalog = { exams: [ENCIB_FALLBACK_META], multiExam: false };
+const ENCIB_ONLY_CATALOG: ExamCatalog = { exams: [ENCIB_FALLBACK_META, ...UPCOMING_EXAMS], multiExam: false };
 
 function toNumber(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : parseFloat(String(value ?? '').replace(',', '.'));
