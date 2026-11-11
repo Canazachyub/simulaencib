@@ -2,116 +2,407 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Estilos base */
+/* Sistema "Terminal de estudio" — ver DESIGN.md */
 @layer base {
   html {
     scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-slate-50 text-slate-800 antialiased;
+    @apply bg-white text-ink antialiased font-sans;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  :focus-visible {
+    outline: 2px solid #1F5B52;
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
-/* Componentes personalizados */
 @layer components {
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 px-6 py-3 font-semibold rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  /* Títulos de pantalla: Plus Jakarta Sans 800 en MAYÚSCULAS */
+  .title-screen {
+    @apply font-display font-extrabold uppercase text-jungle-800;
+    letter-spacing: 0.02em;
   }
 
+  /* Etiqueta de sección: Inter 600, 11 px, MAYÚSCULAS, .08em */
+  .label-section {
+    @apply text-[11px] font-semibold uppercase text-muted;
+    letter-spacing: 0.08em;
+  }
+
+  /* Migas / metadatos */
+  .meta {
+    @apply text-[13px] font-medium text-muted;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Botones idénticos a SinapsisEdu (frontend/src/styles/globals.css) */
+  .btn {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-5 py-3
+           text-[15px] font-semibold transition-colors duration-150 disabled:cursor-not-allowed
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jungle-600/40 focus-visible:ring-offset-2;
+  }
+
+  /* Un solo primario por pantalla */
   .btn-primary {
-    @apply btn bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 hover:-translate-y-0.5;
+    @apply btn bg-jungle-800 text-white hover:bg-jungle-600 disabled:bg-paper disabled:text-subtle;
   }
 
   .btn-secondary {
-    @apply btn bg-white text-slate-700 border-2 border-slate-200 hover:border-primary-300 hover:bg-primary-50 focus:ring-primary-500;
+    @apply btn border border-line bg-white text-ink hover:border-jungle-600 hover:text-jungle-800 disabled:text-subtle disabled:hover:border-line;
   }
 
-  .btn-success {
-    @apply btn bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500 shadow-lg shadow-emerald-500/25;
+  .btn-ghost {
+    @apply inline-flex min-h-[40px] items-center justify-center gap-2 px-3 text-sm font-medium text-muted rounded-xl hover:text-jungle-800 transition-colors duration-150;
   }
 
-  .btn-danger {
-    @apply btn bg-red-500 text-white hover:bg-red-600 focus:ring-red-500;
+  .eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.12em] text-jungle-600;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-line bg-white px-3.5 py-1.5 text-sm font-medium text-jungle-800;
   }
 
   .card {
-    @apply bg-white rounded-2xl shadow-lg shadow-slate-200/50 border border-slate-100;
+    @apply rounded-2xl border border-line bg-white;
   }
 
   .input {
-    @apply w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none transition-all duration-200;
+    @apply w-full h-12 px-4 rounded-xl border border-line bg-white text-ink placeholder:text-subtle outline-none transition-colors duration-150 focus:border-jungle-600 focus:ring-2 focus:ring-jungle-600/15;
   }
 
   .label {
-    @apply block text-sm font-medium text-slate-600 mb-2;
+    @apply block text-sm font-medium text-ink mb-2;
+  }
+
+  /* Chips (6.5) */
+  .chip {
+    @apply inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-chip border border-line bg-white text-sm font-semibold text-ink transition-colors duration-150 hover:bg-paper;
+  }
+
+  .chip-active {
+    @apply bg-jungle-100 border-jungle-600 text-jungle-800 hover:bg-jungle-100;
   }
 }
 
-/* Utilidades personalizadas */
-@layer utilities {
-  .text-gradient {
-    @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
-  }
-
-  .animate-shake {
-    animation: shake 0.5s ease-in-out;
-  }
-
-  @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-5px); }
-    75% { transform: translateX(5px); }
-  }
-}
-
-/* Scrollbar personalizado */
+/* Scrollbar discreto */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-slate-100 rounded-full;
+  background: #F6F8F7;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 rounded-full hover:bg-slate-400;
+  background: #E2E8E6;
+  border-radius: 999px;
 }
 
-/* Animación del timer cuando está en warning */
-.timer-warning {
-  animation: pulse-warning 1s ease-in-out infinite;
+::-webkit-scrollbar-thumb:hover {
+  background: #8A9A96;
 }
 
-@keyframes pulse-warning {
+/* Pulso suave del temporizador (< 2 min), una vez por minuto */
+@keyframes timer-pulse {
+  0%, 4%, 100% { opacity: 1; }
+  2% { opacity: 0.45; }
+}
+
+.timer-critical {
+  animation: timer-pulse 60s linear infinite;
+}
+
+/* Feedback de banqueo: la correcta se llena de izquierda a derecha */
+@keyframes fill-x {
+  from { background-size: 0% 100%; }
+  to { background-size: 100% 100%; }
+}
+
+.fill-correct {
+  background-image: linear-gradient(#16A34A, #16A34A);
+  background-repeat: no-repeat;
+  animation: fill-x 200ms ease-out both;
+}
+
+/* Banqueo inmersivo: patrón sutil de puntos sobre jungle-900 */
+.bg-dots {
+  background-color: #0B211F;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* Confeti sutil (solo CSS) */
+@keyframes confetti-fall {
+  0% { transform: translate3d(0, -12vh, 0) rotate(0deg); opacity: 1; }
+  100% { transform: translate3d(var(--drift, 0px), 105vh, 0) rotate(720deg); opacity: 0.9; }
+}
+
+.confetti-piece {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  animation: confetti-fall linear forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece { display: none; }
+}
+
+/* ===== Modo prueba (simulacro): tema claro por defecto, oscuro opcional ===== */
+.quiz {
+  --q-bg: #F6F8F7;
+  --q-surface: #FFFFFF;
+  --q-ink: #0F1A18;
+  --q-muted: #51625E;
+  --q-line: #E2E8E6;
+  --q-hover: #F1F7F5;
+  --q-accent: #10312D;
+  --q-accent-hover: #1F5B52;
+  --q-on-accent: #FFFFFF;
+  --q-sel-border: #1F5B52;
+  --q-sel-bg: #E3EEEC;
+  --q-chip: #E3EEEC;
+  --q-chip-ink: #10312D;
+  --q-hl: #FDE68A;
+  --q-ruler: rgba(194, 228, 118, 0.35);
+  --q-scale: 1;
+  background: var(--q-bg);
+  color: var(--q-ink);
+}
+
+.quiz[data-theme='dark'] {
+  --q-bg: #1E2129;
+  --q-surface: #272B35;
+  --q-ink: #F1F4F3;
+  --q-muted: #A7B1AE;
+  --q-line: #3A3F4B;
+  --q-hover: #30353F;
+  --q-accent: #C2E476;
+  --q-accent-hover: #D6EE9F;
+  --q-on-accent: #0B211F;
+  --q-sel-border: #C2E476;
+  --q-sel-bg: rgba(194, 228, 118, 0.12);
+  --q-chip: rgba(194, 228, 118, 0.14);
+  --q-chip-ink: #D6EE9F;
+  --q-hl: rgba(250, 204, 21, 0.45);
+  --q-ruler: rgba(194, 228, 118, 0.16);
+  color-scheme: dark;
+}
+
+.quiz mark.qz-hl {
+  background: var(--q-hl);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  cursor: pointer;
+}
+
+.quiz mark:not(.qz-hl) {
+  background: var(--q-hl);
+  color: inherit;
+}
+
+.qz-btn-primary {
+  @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-5 py-3 text-[15px] font-semibold transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40;
+  background: var(--q-accent);
+  color: var(--q-on-accent);
+}
+.qz-btn-primary:not(:disabled):hover { background: var(--q-accent-hover); }
+
+.qz-btn-secondary {
+  @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-3 text-[15px] font-semibold border transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40;
+  background: var(--q-surface);
+  border-color: var(--q-line);
+  color: var(--q-ink);
+}
+.qz-btn-secondary:not(:disabled):hover { border-color: var(--q-sel-border); }
+
+/* Letras A–E de los mosaicos del banqueo: entran con rebote escalonado */
+@keyframes letra-in {
+  0% { transform: scale(0.3) rotate(-18deg); opacity: 0; }
+  60% { transform: scale(1.15) rotate(6deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+@keyframes letra-hover {
+  0%, 100% { transform: rotate(0) scale(1); }
+  30% { transform: rotate(-10deg) scale(1.08); }
+  60% { transform: rotate(8deg) scale(1.08); }
+}
+.letra-opcion { animation: letra-in 420ms cubic-bezier(.34,1.56,.64,1) both; }
+.group:hover .letra-opcion { animation: letra-hover 500ms ease-in-out; }
+@media (prefers-reduced-motion: reduce) { .letra-opcion, .group:hover .letra-opcion { animation: none; } }
+
+/* ===== Banqueo: animaciones de acierto / error (respetan prefers-reduced-motion) ===== */
+@keyframes tile-win {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.08); }
+  55% { transform: scale(0.97); }
+  75% { transform: scale(1.03); }
+  100% { transform: scale(1.02); }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px #C2E476, 0 0 0 0 rgba(194, 228, 118, 0); }
+  25%, 75% { box-shadow: 0 0 0 4px #C2E476, 0 0 0 14px rgba(194, 228, 118, 0.45); }
+  50% { box-shadow: 0 0 0 4px #C2E476, 0 0 0 4px rgba(194, 228, 118, 0.1); }
+}
+.fx-tile-win {
+  animation: tile-win 620ms cubic-bezier(.34, 1.56, .64, 1) both, glow-pulse 900ms ease-in-out 120ms 1 both;
+  box-shadow: 0 0 0 4px #C2E476;
+}
+@keyframes tile-hint {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 4px #C2E476; }
+  20%, 60% { transform: scale(1.05); box-shadow: 0 0 0 4px #C2E476, 0 0 0 12px rgba(194, 228, 118, 0.4); }
+  40%, 80% { transform: scale(1); }
+}
+.fx-tile-hint {
+  animation: tile-hint 1000ms ease-in-out 250ms both;
+  box-shadow: 0 0 0 4px #C2E476;
+}
+@keyframes tile-break {
+  0% { transform: none; filter: none; }
+  15% { transform: translateX(-8px) rotate(-1.5deg); }
+  30% { transform: translateX(7px) rotate(1.5deg); }
+  45% { transform: translateX(-5px) rotate(-1deg); }
+  60% { transform: translateX(3px) rotate(0.5deg); }
+  100% { transform: rotate(-1.6deg) scale(0.97); filter: saturate(0.45) brightness(0.92); }
+}
+.fx-tile-break { animation: tile-break 520ms ease-out both; }
+
+@keyframes panel-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-10px); }
+  40% { transform: translateX(9px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(3px); }
+}
+.fx-panel-shake { animation: panel-shake 350ms ease-in-out; }
+
+@keyframes vignette {
+  0% { opacity: 0; }
+  30% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.fx-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  box-shadow: inset 0 0 120px 30px rgba(220, 38, 38, 0.55);
+  animation: vignette 400ms ease-out both;
+}
+
+/* Estallido de partículas desde el centro del mosaico */
+@keyframes burst {
+  0% { transform: translate(-50%, -50%) rotate(0deg) translateY(0) scale(0.6); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(calc(var(--d) * -1)) scale(1); opacity: 0; }
+}
+.fx-particle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+  animation: burst 700ms cubic-bezier(.15, .8, .3, 1) both;
+}
+
+/* "+136" que vuela hasta la pastilla de puntos */
+@keyframes fly-points {
+  0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+  15% { transform: translate(-50%, -90%) scale(1.25); opacity: 1; }
+  45% { transform: translate(-50%, -110%) scale(1.15); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.55); opacity: 0.2; }
+}
+.fx-fly {
+  position: fixed;
+  z-index: 70;
+  pointer-events: none;
+  animation: fly-points 900ms cubic-bezier(.5, 0, .3, 1) both;
+}
+@keyframes pill-bump {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
+  40% { transform: scale(1.22); }
+  70% { transform: scale(0.95); }
+}
+.fx-pill-bump { animation: pill-bump 380ms cubic-bezier(.34, 1.56, .64, 1); }
+
+/* Llama de racha */
+@keyframes flame-glow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(251, 146, 60, 0.7)); }
+  50% { filter: drop-shadow(0 0 10px rgba(253, 186, 116, 1)); }
+}
+.fx-flame { animation: flame-glow 1.2s ease-in-out infinite; transition: transform 300ms cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes flame-out {
+  0% { transform: scale(1.3); filter: none; }
+  60% { transform: scale(0.6) translateY(3px); filter: grayscale(1); opacity: 0.6; }
+  100% { transform: scale(1); filter: grayscale(1); opacity: 0.55; }
+}
+.fx-flame-out { animation: flame-out 600ms ease-in both; }
+@keyframes spark-up {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--sx), -26px) scale(0.3); opacity: 0; }
+}
+.fx-spark {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #FDBA74;
+  pointer-events: none;
+  animation: spark-up 900ms ease-out infinite;
 }
 
-/* Feedback de opciones */
-.option-correct {
-  @apply border-emerald-500 bg-emerald-50 text-emerald-700;
-}
+/* Check que se dibuja */
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.fx-draw { stroke-dasharray: 30; stroke-dashoffset: 30; animation: draw 380ms ease-out 120ms forwards; }
 
-.option-incorrect {
-  @apply border-red-500 bg-red-50 text-red-700;
+/* Mascota que se asoma */
+@keyframes peek {
+  0% { transform: translateY(110%) rotate(-8deg); }
+  20%, 75% { transform: translateY(8%) rotate(4deg); }
+  85% { transform: translateY(14%) rotate(2deg); }
+  100% { transform: translateY(110%) rotate(-6deg); }
 }
-
-.option-selected {
-  @apply border-primary-500 bg-primary-50;
+.fx-peek { animation: peek 1300ms cubic-bezier(.34, 1.4, .64, 1) both; }
+@keyframes mascot-in {
+  0% { transform: translateY(40px) scale(0.6); opacity: 0; }
+  60% { transform: translateY(-10px) scale(1.06); opacity: 1; }
+  80% { transform: translateY(4px) scale(0.98); }
+  100% { transform: none; opacity: 1; }
 }
+.fx-mascot-in { animation: mascot-in 700ms cubic-bezier(.34, 1.56, .64, 1) 150ms both; }
 
-/* Animación suave del cronómetro */
-.animate-pulse-slow {
-  animation: pulse-slow 2s ease-in-out infinite;
+/* Cronómetro que tiembla */
+@keyframes clock-shake {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(-18deg); }
+  40% { transform: rotate(16deg); }
+  60% { transform: rotate(-12deg); }
+  80% { transform: rotate(8deg); }
 }
+.fx-clock-shake { animation: clock-shake 500ms ease-in-out 2; }
 
-@keyframes pulse-slow {
-  0%, 100% {
-    box-shadow: 0 10px 25px -5px rgba(168, 85, 247, 0.4);
-  }
-  50% {
-    box-shadow: 0 20px 35px -5px rgba(168, 85, 247, 0.6);
-  }
+@media (prefers-reduced-motion: reduce) {
+  .fx-tile-win, .fx-tile-hint, .fx-tile-break, .fx-panel-shake, .fx-pill-bump, .fx-flame, .fx-flame-out,
+  .fx-clock-shake, .fx-mascot-in { animation: none !important; }
+  .fx-particle, .fx-fly, .fx-spark, .fx-vignette, .fx-peek { display: none !important; }
+  .fx-draw { animation: none; stroke-dashoffset: 0; }
 }

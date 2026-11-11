@@ -289,7 +289,7 @@ export function PDFGenerator({ result }: PDFGeneratorProps) {
     <button
       onClick={generatePDF}
       disabled={isGenerating}
-      className="btn-primary bg-cyan-600 hover:bg-cyan-700"
+      className="btn-primary"
     >
       {isGenerating ? (
         <>

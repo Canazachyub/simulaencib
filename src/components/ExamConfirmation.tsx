@@ -7,6 +7,7 @@ import {
 import { useExamStore, useSelectedExam } from '../hooks/useExam';
 import { ALL_UNIVERSITIES, ENCIB_FALLBACK_CONFIG } from '../types';
 import { formatDuration, formatDurationShort } from '../utils/calculations';
+import { TopBar, SectionLabel, Accordion, AccordionItem, GradingStepper } from './terminal';
 
 export function ExamConfirmation() {
   const navigate = useNavigate();
@@ -54,17 +55,20 @@ export function ExamConfirmation() {
     `Tienes ${formatDuration(durationMinutes).toUpperCase()} para completar el examen (igual que el ${exam.nombre} oficial)`,
     'Cuando el tiempo termine, el examen se cierra y muestra tus resultados',
     'Puedes navegar libremente entre las preguntas (avanzar y retroceder)',
-    'No sabrás si tu respuesta es correcta hasta que presiones "Calificar"',
+    'No sabrás si tu respuesta es correcta hasta que envíes la prueba (botón "Revisar" → "Enviar la prueba")',
     `Al finalizar, obtendrás tu nota (0-${scaleMax})${passing !== null ? `; se aprueba con ${passing}` : ''} y podrás descargar un PDF`
   ];
 
   if (status === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <Loader2 className="w-16 h-16 text-cyan-600 animate-spin mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-slate-800 mb-2">Preparando tu examen</h2>
-          <p className="text-slate-600">Cargando preguntas del {exam.nombre}...</p>
+      <div className="min-h-screen flex flex-col bg-paper">
+        <TopBar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-10 h-10 text-jungle-600 animate-spin mx-auto mb-4" />
+            <h2 className="title-screen text-xl mb-2">Preparando tu examen</h2>
+            <p className="text-muted">Cargando preguntas del {exam.nombre}...</p>
+          </div>
         </div>
       </div>
     );
@@ -72,164 +76,135 @@ export function ExamConfirmation() {
 
   if (status === 'error') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-        <div className="card p-8 max-w-md w-full text-center">
-          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-slate-800 mb-2">Error al cargar</h2>
-          <p className="text-slate-600 mb-6">{error}</p>
-          <div className="flex gap-4 justify-center">
-            <button onClick={() => navigate('/registro')} className="btn-secondary">
-              Volver
-            </button>
-            <button onClick={handleStartExam} className="btn-primary bg-cyan-600 hover:bg-cyan-700">
-              Reintentar
-            </button>
+      <div className="min-h-screen flex flex-col bg-paper">
+        <TopBar />
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="card p-8 max-w-md w-full text-center">
+            <AlertCircle className="w-12 h-12 text-wrong mx-auto mb-4" />
+            <h2 className="title-screen text-xl mb-2">Error al cargar</h2>
+            <p className="text-muted mb-6">{error}</p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => navigate('/registro')} className="btn-secondary">
+                Volver
+              </button>
+              <button onClick={handleStartExam} className="btn-primary">
+                Reintentar
+              </button>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  const kpis = [
+    { icon: BookOpen, value: totalQuestions || '—', label: 'Preguntas' },
+    { icon: Clock, value: formatDurationShort(durationMinutes), label: 'Duración' },
+    { icon: ListChecks, value: alternatives, label: 'Alternativas' },
+    { icon: Award, value: `0–${scaleMax}`, label: passing !== null ? `Aprueba con ${passing}` : 'Escala de nota' }
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-4">
-      <div className="max-w-2xl mx-auto">
-        <div className="card p-8 animate-fade-in">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-cyan-100 text-cyan-600 rounded-2xl mb-4">
-              <Stethoscope className="w-7 h-7" />
-            </div>
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-800 mb-2">
-              Confirmar datos del examen
-            </h1>
-            <p className="text-slate-600">
-              Verifica tu información antes de comenzar el simulacro {exam.nombre}
+    <div className="min-h-screen flex flex-col bg-paper">
+      <TopBar />
+
+      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-8 lg:py-12">
+        {/* Cabecera (6.1) */}
+        <div className="flex items-start gap-4 mb-6">
+          <div className="grid place-items-center w-12 h-12 shrink-0 rounded-control bg-jungle-100 text-jungle-800">
+            <Stethoscope className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="meta num">
+              {exam.nombre} · Simulacro{totalQuestions ? ` · ${totalQuestions} preguntas` : ''} · {formatDurationShort(durationMinutes)}
             </p>
+            <h1 className="title-screen text-[26px] md:text-[28px] leading-tight mt-1">Confirmar examen</h1>
           </div>
+        </div>
 
-          {/* Student Info Card */}
-          <div className="bg-slate-50 rounded-xl p-6 mb-8">
-            <h2 className="font-semibold text-slate-700 mb-4">Datos del estudiante</h2>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <CreditCard className="w-5 h-5 text-slate-400" />
-                <span className="text-slate-600">DNI:</span>
-                <span className="font-semibold text-slate-800">{student.dni}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <User className="w-5 h-5 text-slate-400" />
-                <span className="text-slate-600">Nombre:</span>
-                <span className="font-semibold text-slate-800">{student.fullName}</span>
-              </div>
-              <div className="flex items-start gap-3">
-                <GraduationCap className="w-5 h-5 text-slate-400 mt-0.5" />
-                <span className="text-slate-600">Universidad:</span>
-                <span className="font-semibold text-slate-800">{universityName}</span>
-              </div>
-            </div>
-          </div>
+        <div className="card">
+          {/* Estudiante */}
+          <section className="p-6 border-b border-line">
+            <SectionLabel>Estudiante</SectionLabel>
+            <dl className="mt-3 grid sm:grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[15px]">
+              <dt className="flex items-center gap-2 text-muted"><CreditCard className="w-4 h-4" />DNI</dt>
+              <dd className="num font-semibold text-ink">{student.dni}</dd>
+              <dt className="flex items-center gap-2 text-muted"><User className="w-4 h-4" />Nombre</dt>
+              <dd className="font-semibold text-ink">{student.fullName}</dd>
+              <dt className="flex items-center gap-2 text-muted"><GraduationCap className="w-4 h-4" />Universidad</dt>
+              <dd className="font-semibold text-ink">{universityName}</dd>
+            </dl>
+          </section>
 
-          {/* Exam Info */}
-          <div className="bg-cyan-50 rounded-xl p-6 mb-8">
-            <h2 className="font-semibold text-cyan-700 mb-1">Detalles del examen {exam.nombre}</h2>
-            {exam.descripcion && (
-              <p className="text-sm text-slate-600 mb-4">{exam.descripcion}</p>
-            )}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-white rounded-lg">
-                <p className="text-3xl font-bold text-cyan-600">{totalQuestions || '—'}</p>
-                <p className="text-sm text-slate-600">Preguntas</p>
-              </div>
-              <div className="text-center p-4 bg-white rounded-lg">
-                <p className="text-3xl font-bold text-cyan-600 flex items-center justify-center gap-1">
-                  <Clock className="w-6 h-6" />
-                  {formatDurationShort(durationMinutes)}
-                </p>
-                <p className="text-sm text-slate-600">Duración</p>
-              </div>
-              <div className="text-center p-4 bg-white rounded-lg">
-                <p className="text-3xl font-bold text-cyan-600 flex items-center justify-center gap-1">
-                  <ListChecks className="w-6 h-6" />
-                  {alternatives}
-                </p>
-                <p className="text-sm text-slate-600">Alternativas</p>
-              </div>
-              <div className="text-center p-4 bg-white rounded-lg">
-                <p className="text-3xl font-bold text-cyan-600 flex items-center justify-center gap-1">
-                  <Award className="w-6 h-6" />
-                  0-{scaleMax}
-                </p>
-                <p className="text-sm text-slate-600">
-                  {passing !== null ? `Nota (aprueba con ${passing})` : 'Escala de nota'}
-                </p>
-              </div>
-            </div>
-            {fuente && (
-              <p className="mt-4 text-xs text-slate-500">
-                <strong>Fuente:</strong> {fuente}
-              </p>
-            )}
-          </div>
-
-          {/* Courses List */}
-          <div className="bg-slate-50 rounded-xl p-6 mb-8">
-            <h2 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
-              <BookOpen className="w-5 h-5" />
-              Cursos evaluados ({examCourses.length})
-            </h2>
-            {examCourses.length === 0 ? (
-              <p className="text-sm text-slate-500 flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Cargando cursos...
-              </p>
-            ) : (
-              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 ${examCourses.length > 12 ? 'max-h-80 overflow-y-auto pr-1' : ''}`}>
-                {examCourses.map((course) => (
-                  <div key={course.name} className="flex items-center justify-between gap-2 text-sm py-2 px-3 bg-white rounded-lg">
-                    <span className="text-slate-700">{course.name}</span>
-                    <span className="text-cyan-600 font-semibold flex-shrink-0">{course.questionCount}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Instructions */}
-          <div className="bg-emerald-50 rounded-xl p-6 mb-8">
-            <h2 className="font-semibold text-emerald-700 mb-4 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
-              Instrucciones del examen
-            </h2>
-            <ul className="space-y-2">
-              {instructions.map((instruction, index) => (
-                <li key={index} className="flex items-start gap-2 text-emerald-800">
-                  <span className="font-bold text-emerald-600">{index + 1}.</span>
-                  <span>{instruction}</span>
-                </li>
+          {/* Examen */}
+          <section className="p-6">
+            <SectionLabel>Examen {exam.nombre}</SectionLabel>
+            {exam.descripcion && <p className="text-sm text-muted mt-2">{exam.descripcion}</p>}
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {kpis.map(k => (
+                <div key={k.label} className="rounded-control border border-line p-3">
+                  <k.icon className="w-4 h-4 text-jungle-600" />
+                  <p className="num text-xl font-semibold text-ink mt-2">{k.value}</p>
+                  <p className="text-[13px] text-muted">{k.label}</p>
+                </div>
               ))}
-            </ul>
-          </div>
+            </div>
+            {fuente && <p className="mt-4 text-xs text-subtle">Fuente: {fuente}</p>}
+          </section>
 
-          {/* Actions */}
-          <div className="flex justify-between">
-            <button
-              onClick={() => navigate('/registro')}
-              className="btn-secondary"
-            >
+          {/* Reglas y cursos (6.8) */}
+          <section className="px-6">
+            <Accordion>
+              <AccordionItem title="Reglas del examen" icon={<AlertTriangle className="w-4 h-4" />} defaultOpen>
+                <ol className="space-y-2">
+                  {instructions.map((instruction, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="num font-semibold text-jungle-800">{index + 1}.</span>
+                      <span>{instruction}</span>
+                    </li>
+                  ))}
+                </ol>
+              </AccordionItem>
+              <AccordionItem title="Cómo se califica" icon={<Award className="w-4 h-4" />}>
+                <p className="mb-4">
+                  Nota de 0 a {scaleMax}{passing !== null ? `; se aprueba con ${passing}` : ''}. Las preguntas sin
+                  contestar cuentan como incorrectas.
+                </p>
+                <GradingStepper />
+              </AccordionItem>
+              <AccordionItem title={`Cursos evaluados (${examCourses.length})`} icon={<BookOpen className="w-4 h-4" />}>
+                {examCourses.length === 0 ? (
+                  <p className="text-sm flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Cargando cursos...
+                  </p>
+                ) : (
+                  <ul className={`divide-y divide-line ${examCourses.length > 12 ? 'max-h-80 overflow-y-auto pr-1' : ''}`}>
+                    {examCourses.map((course) => (
+                      <li key={course.name} className="flex items-center justify-between gap-2 text-sm py-2">
+                        <span className="text-ink">{course.name}</span>
+                        <span className="num font-semibold text-ink flex-shrink-0">{course.questionCount}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </AccordionItem>
+            </Accordion>
+          </section>
+
+          {/* Acciones */}
+          <div className="p-6 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
+            <button onClick={() => navigate('/registro')} className="btn-secondary">
               <ChevronLeft className="w-5 h-5" />
               Modificar datos
             </button>
-            <button
-              onClick={handleStartExam}
-              disabled={!examConfig}
-              className="btn-primary bg-cyan-600 hover:bg-cyan-700 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <PlayCircle className="w-6 h-6" />
-              Iniciar Examen
+            <button onClick={handleStartExam} disabled={!examConfig} className="btn-primary">
+              <PlayCircle className="w-5 h-5" />
+              Comenzar
             </button>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

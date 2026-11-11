@@ -17,6 +17,24 @@
  * DESPLIEGUE: pegar este archivo en el proyecto de Apps Script, Guardar e
  *   Implementar > Gestionar implementaciones > editar (lápiz) > Versión: Nueva versión > Implementar.
  *   Así se mantiene la misma URL /exec.
+ *   ¡OJO! Las acciones del "Arma tu banqueo" (banqueoCatalog, banqueoIds, banqueoPorIds) solo
+ *   existen tras REDESPLEGAR como "Nueva versión" en la MISMA implementación. Mientras no se haga,
+ *   el frontend detecta el backend viejo y sigue con el banqueo clásico de 10 al azar.
+ *   Antes de redesplegar se puede probar en el editor: testBanqueoCatalog() y testBanqueoIds().
+ *   Si se editan las hojas Banco_*, ejecutar clearBanqueoCache() (o esperar 30 min).
+ *
+ * ID DE PREGUNTA: estable, sin tocar las hojas. Es un hash de 10 caracteres base36 (dos FNV-1a de
+ *   32 bits) de questionText + option1 normalizados (sin HTML, sin tildes, minúsculas, espacios
+ *   colapsados). Si se reordena la hoja o se agregan filas, el id no cambia; si se edita el texto
+ *   de la pregunta o la opción 1, cambia (es otra pregunta para el progreso del alumno).
+ *
+ * BANQUEO v2 (contrato):
+ *   ?action=banqueoCatalog&exam=X
+ *     → { exam, courses:[{ name, total, temas:[{tema,total,subtemas:[{subtema,total}]}], fuentes:[{fuente,total}] }] }
+ *   ?action=banqueoIds&exam=X&course=Y[&temas=a|b][&subtemas=c|d][&fuentes=e|f]
+ *     → { exam, course, total, items:[{id,tema,subtema,fuente}] }   (filtros separados por "|", AND entre grupos)
+ *   ?action=banqueoPorIds&exam=X&course=Y&ids=id1,id2,...   (máx. 30)
+ *     → { exam, course, totalQuestions, questions:[Question...], missing:[ids no encontrados] }  (en el orden pedido)
  */
 
 // ============================================
@@ -125,11 +143,27 @@ function doGet(e) {
         if (!p.course) return createErrorResponse('Parámetro "course" requerido');
         result = getBanqueoQuestions(p.course, examId);
         break;
+      case 'banqueoCatalog':
+        result = getBanqueoCatalog(examId);
+        break;
+      case 'banqueoIds':
+        if (!p.course) return createErrorResponse('Parámetro "course" requerido');
+        result = getBanqueoIds(examId, p.course, {
+          temas: splitList_(p.temas, '|'),
+          subtemas: splitList_(p.subtemas, '|'),
+          fuentes: splitList_(p.fuentes, '|')
+        });
+        break;
+      case 'banqueoPorIds':
+        if (!p.course) return createErrorResponse('Parámetro "course" requerido');
+        if (!p.ids) return createErrorResponse('Parámetro "ids" requerido');
+        result = getBanqueoPorIds(examId, p.course, splitList_(p.ids, ','));
+        break;
       case 'test':
         result = { status: 'ok', message: 'API SINAPSIS multi-examen funcionando', exams: EXAM_ORDER, timestamp: new Date().toISOString() };
         break;
       default:
-        return createErrorResponse('Acción no válida. Use: exams, config, questions, register, saveScore, getHistory, checkAccess, checkBanqueoAccess, getBanqueoQuestions o test');
+        return createErrorResponse('Acción no válida. Use: exams, config, questions, register, saveScore, getHistory, checkAccess, checkBanqueoAccess, getBanqueoQuestions, banqueoCatalog, banqueoIds, banqueoPorIds o test');
     }
     return createSuccessResponse(result);
   } catch (error) {
@@ -218,6 +252,42 @@ function readBankRows(ss, sheetNames) {
   return rows;
 }
 
+// ============================================
+// ID ESTABLE DE PREGUNTA (hash de questionText + option1)
+// ============================================
+function normalizeForId_(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function fnv1a32_(str, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** Id de 10 caracteres base36 (~51 bits): dos FNV-1a con semillas distintas. */
+function questionId_(questionText, option1) {
+  const s = normalizeForId_(questionText) + '\u0001' + normalizeForId_(option1);
+  const a = fnv1a32_(s, 0x811c9dc5).toString(36);
+  const b = fnv1a32_(s, 0x9747b28c).toString(36);
+  return ('0000000' + a).slice(-7) + ('0000000' + b).slice(-3);
+}
+
+function rowId_(q) {
+  if (!q._id) q._id = questionId_(safeCell(q.data, q.cols.questionText), safeCell(q.data, q.cols.option1));
+  return q._id;
+}
+
 function formatQuestion(q, opts) {
   const row = q.data, c = q.cols;
   const options = [
@@ -226,7 +296,7 @@ function formatQuestion(q, opts) {
   ].filter(function (o) { return o !== null; });
   const correctAnswerIndex = (parseInt(safeCell(row, c.correctAnswer)) || 1) - 1;
   return {
-    id: opts.idPrefix + '-' + q.sheet + '-' + q.rowIndex,
+    id: opts.id || rowId_(q),
     number: opts.number,
     questionText: safeCell(row, c.questionText),
     questionType: safeCell(row, c.questionType) || 'Caso Clínico',
@@ -342,13 +412,17 @@ function getQuestions(examId) {
   const exam = EXAMS[examId];
   const ss = SpreadsheetApp.openById(exam.spreadsheetId);
   const questions = [];
+  const usedIds = {};
   let number = 1;
   getExamCourses(examId).forEach(function (course) {
     if (course.questionCount <= 0) return;
     const pool = readBankRows(ss, course.sheets);
     selectRandomItems(pool, course.questionCount).forEach(function (q) {
+      // El id es estable, pero si el banco tiene la misma pregunta duplicada se desambigua
+      let id = rowId_(q);
+      if (usedIds[id]) id = id + '-' + (++usedIds[id]); else usedIds[id] = 1;
       questions.push(formatQuestion(q, {
-        idPrefix: examId, number: number++, subject: course.name, points: course.points
+        id: id, number: number++, subject: course.name, points: course.points
       }));
     });
   });
@@ -381,10 +455,188 @@ function getBanqueoQuestions(courseName, examId) {
   const pool = readBankRows(ss, course.sheets);
   if (!pool.length) return { error: 'No hay preguntas disponibles', questions: [] };
 
+  const usedIds = {};
   const questions = selectRandomItems(pool, 10).map(function (q, i) {
-    return formatQuestion(q, { idPrefix: 'banqueo-' + examId, number: i + 1, subject: courseName, points: course.points });
+    let id = rowId_(q);
+    if (usedIds[id]) id = id + '-' + (++usedIds[id]); else usedIds[id] = 1;
+    return formatQuestion(q, { id: id, number: i + 1, subject: courseName, points: course.points });
   });
   return { exam: examId, course: courseName, totalQuestions: questions.length, stock: pool.length, questions: questions };
+}
+
+// ============================================
+// BANQUEO v2 — "Arma tu banqueo" (catálogo, ids filtrados, preguntas por id)
+// ============================================
+const BANQUEO_CACHE_SECONDS = 1800;
+const BANQUEO_CHUNK = 90000; // CacheService admite 100 KB por clave
+const BANQUEO_MAX_POR_IDS = 30;
+const SIN_TEMA = 'Sin tema';
+const SIN_SUBTEMA = 'Sin subtema';
+const SIN_FUENTE = 'Sin fuente';
+
+function splitList_(raw, sep) {
+  if (raw === undefined || raw === null || raw === '') return [];
+  return String(raw).split(sep).map(function (s) { return s.trim(); }).filter(String);
+}
+
+/** Texto para mostrar: trim + espacios colapsados. */
+function cleanLabel_(v, fallback) {
+  const s = v === null || v === undefined ? '' : String(v).replace(/\s+/g, ' ').trim();
+  return s || fallback;
+}
+
+/** Clave de agrupación: sin tildes, minúsculas, espacios colapsados. */
+function labelKey_(s) {
+  return normalizeHeader(s);
+}
+
+function findBanqueoCourse_(examId, courseName) {
+  return getExamCourses(examId).filter(function (c) { return c.name === courseName; })[0] || null;
+}
+
+function banqueoCacheKey_(examId, courseName) {
+  return 'bidx_' + examId + '_' + fnv1a32_(courseName, 0x811c9dc5).toString(36);
+}
+
+function cachePutChunked_(cache, key, str) {
+  const parts = {};
+  const n = Math.ceil(str.length / BANQUEO_CHUNK) || 1;
+  for (let i = 0; i < n; i++) parts[key + '_' + i] = str.substr(i * BANQUEO_CHUNK, BANQUEO_CHUNK);
+  parts[key + '_n'] = String(n);
+  try { cache.putAll(parts, BANQUEO_CACHE_SECONDS); } catch (err) { console.log('Cache llena: ' + err); }
+}
+
+function cacheGetChunked_(cache, key) {
+  const n = parseInt(cache.get(key + '_n'));
+  if (!(n > 0)) return null;
+  const keys = [];
+  for (let i = 0; i < n; i++) keys.push(key + '_' + i);
+  const got = cache.getAll(keys);
+  let str = '';
+  for (let i = 0; i < n; i++) {
+    if (got[keys[i]] === undefined || got[keys[i]] === null) return null;
+    str += got[keys[i]];
+  }
+  return str;
+}
+
+/**
+ * Índice compacto de un curso: { t:[temas], s:[subtemas], f:[fuentes], r:[[id, ti, si, fi], ...] }
+ * Sin duplicados (misma pregunta en dos hojas = un solo id). Se cachea troceado.
+ */
+function getCourseIndex_(examId, course, ss) {
+  const cache = CacheService.getScriptCache();
+  const key = banqueoCacheKey_(examId, course.name);
+  const cached = cacheGetChunked_(cache, key);
+  if (cached) return JSON.parse(cached);
+
+  ss = ss || SpreadsheetApp.openById(EXAMS[examId].spreadsheetId);
+  const rows = readBankRows(ss, course.sheets);
+  const idx = { t: [], s: [], f: [], r: [] };
+  const maps = { t: {}, s: {}, f: {} };
+  function intern(kind, label) {
+    const k = labelKey_(label);
+    if (maps[kind][k] === undefined) { maps[kind][k] = idx[kind].length; idx[kind].push(label); }
+    return maps[kind][k];
+  }
+  const seen = {};
+  rows.forEach(function (q) {
+    const id = rowId_(q);
+    if (seen[id]) return;
+    seen[id] = true;
+    idx.r.push([
+      id,
+      intern('t', cleanLabel_(safeCell(q.data, q.cols.tema), SIN_TEMA)),
+      intern('s', cleanLabel_(safeCell(q.data, q.cols.subtema), SIN_SUBTEMA)),
+      intern('f', cleanLabel_(safeCell(q.data, q.cols.sourceFile), SIN_FUENTE))
+    ]);
+  });
+  cachePutChunked_(cache, key, JSON.stringify(idx));
+  return idx;
+}
+
+function summarizeCourseIndex_(name, idx) {
+  const temas = idx.t.map(function (t) { return { tema: t, total: 0, subtemas: {} }; });
+  const fuentes = idx.f.map(function (f) { return { fuente: f, total: 0 }; });
+  idx.r.forEach(function (r) {
+    const t = temas[r[1]];
+    t.total++;
+    t.subtemas[r[2]] = (t.subtemas[r[2]] || 0) + 1;
+    fuentes[r[3]].total++;
+  });
+  return {
+    name: name,
+    total: idx.r.length,
+    temas: temas.filter(function (t) { return t.total > 0; }).map(function (t) {
+      return {
+        tema: t.tema,
+        total: t.total,
+        subtemas: Object.keys(t.subtemas).map(function (si) { return { subtema: idx.s[si], total: t.subtemas[si] }; })
+          .sort(function (a, b) { return b.total - a.total; })
+      };
+    }).sort(function (a, b) { return b.total - a.total; }),
+    fuentes: fuentes.filter(function (f) { return f.total > 0; })
+      .sort(function (a, b) { return b.fuente.localeCompare(a.fuente, 'es', { numeric: true }); })
+  };
+}
+
+function getBanqueoCatalog(examId) {
+  const courses = getExamCourses(examId);
+  let ss = null;
+  const out = courses.map(function (course) {
+    try {
+      // Solo se abre el Sheets si algún curso no está en caché
+      const cache = CacheService.getScriptCache();
+      if (!ss && !cache.get(banqueoCacheKey_(examId, course.name) + '_n')) ss = SpreadsheetApp.openById(EXAMS[examId].spreadsheetId);
+      return summarizeCourseIndex_(course.name, getCourseIndex_(examId, course, ss));
+    } catch (err) {
+      return { name: course.name, total: 0, temas: [], fuentes: [], error: String(err) };
+    }
+  });
+  return { exam: examId, courses: out, generatedAt: new Date().toISOString() };
+}
+
+function getBanqueoIds(examId, courseName, filters) {
+  const course = findBanqueoCourse_(examId, courseName);
+  if (!course) return { error: 'Curso no válido', items: [] };
+  const idx = getCourseIndex_(examId, course);
+  function keySet(list) {
+    if (!list || !list.length) return null;
+    const o = {};
+    list.forEach(function (v) { o[labelKey_(v)] = true; });
+    return o;
+  }
+  const fT = keySet(filters.temas), fS = keySet(filters.subtemas), fF = keySet(filters.fuentes);
+  const tk = idx.t.map(labelKey_), sk = idx.s.map(labelKey_), fk = idx.f.map(labelKey_);
+  const items = [];
+  idx.r.forEach(function (r) {
+    if (fT && !fT[tk[r[1]]]) return;
+    if (fS && !fS[sk[r[2]]]) return;
+    if (fF && !fF[fk[r[3]]]) return;
+    items.push({ id: r[0], tema: idx.t[r[1]], subtema: idx.s[r[2]], fuente: idx.f[r[3]] });
+  });
+  return { exam: examId, course: courseName, total: items.length, items: items };
+}
+
+function getBanqueoPorIds(examId, courseName, ids) {
+  const course = findBanqueoCourse_(examId, courseName);
+  if (!course) return { error: 'Curso no válido', questions: [] };
+  if (ids.length > BANQUEO_MAX_POR_IDS) return { error: 'Máximo ' + BANQUEO_MAX_POR_IDS + ' ids por llamada', questions: [] };
+  const wanted = {};
+  ids.forEach(function (id) { wanted[id] = null; });
+  const ss = SpreadsheetApp.openById(EXAMS[examId].spreadsheetId);
+  readBankRows(ss, course.sheets).forEach(function (q) {
+    const id = rowId_(q);
+    if (wanted.hasOwnProperty(id) && wanted[id] === null) wanted[id] = q;
+  });
+  const questions = [];
+  const missing = [];
+  ids.forEach(function (id) {
+    const q = wanted[id];
+    if (!q) { missing.push(id); return; }
+    questions.push(formatQuestion(q, { id: id, number: questions.length + 1, subject: courseName, points: course.points }));
+  });
+  return { exam: examId, course: courseName, totalQuestions: questions.length, questions: questions, missing: missing };
 }
 
 // ============================================
@@ -559,4 +811,35 @@ function checkBanqueoAccess(dni, email) {
 function testListExams() { console.log(JSON.stringify(listExams(), null, 2)); }
 function testConfigs() { EXAM_ORDER.forEach(function (id) { const c = getConfig(id); console.log(id, c.totalQuestions, c.maxScore, c.courses.length); }); }
 function testQuestionsEnam() { const q = getQuestions('enam'); console.log(q.length, JSON.stringify(q[0], null, 2)); }
+function testBanqueoCatalog() {
+  const t0 = Date.now();
+  const cat = getBanqueoCatalog('enam');
+  console.log('banqueoCatalog enam: ' + cat.courses.length + ' cursos en ' + (Date.now() - t0) + ' ms');
+  cat.courses.forEach(function (c) {
+    console.log(c.name + ': ' + c.total + ' preguntas, ' + c.temas.length + ' temas, fuentes: ' +
+      c.fuentes.slice(0, 5).map(function (f) { return f.fuente + ' (' + f.total + ')'; }).join(', '));
+  });
+}
+function testBanqueoIds() {
+  const course = getExamCourses('enam')[0];
+  const all = getBanqueoIds('enam', course.name, {});
+  console.log(course.name + ': ' + all.total + ' ids. Primeros: ' + JSON.stringify(all.items.slice(0, 3)));
+  if (!all.items.length) return;
+  const tema = all.items[0].tema;
+  const filtrado = getBanqueoIds('enam', course.name, { temas: [tema] });
+  console.log('Tema "' + tema + '": ' + filtrado.total + ' ids');
+  const ids = all.items.slice(0, 3).map(function (i) { return i.id; });
+  const porIds = getBanqueoPorIds('enam', course.name, ids);
+  console.log('porIds: ' + porIds.questions.length + ' de ' + ids.length + ', faltan ' + porIds.missing.length +
+    '. Orden ok: ' + (porIds.questions.map(function (q) { return q.id; }).join(',') === ids.join(',')));
+}
+function clearBanqueoCache() {
+  const cache = CacheService.getScriptCache();
+  EXAM_ORDER.forEach(function (examId) {
+    try {
+      getExamCourses(examId).forEach(function (c) { cache.remove(banqueoCacheKey_(examId, c.name) + '_n'); });
+    } catch (err) { console.log(examId + ': ' + err); }
+  });
+  console.log('Caché del banqueo borrada');
+}
 function clearConfigCache() { CacheService.getScriptCache().removeAll(EXAM_ORDER.map(function (id) { return 'cfg_' + id; })); }

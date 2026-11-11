@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import {
-  Brain, BookOpen, ChevronRight, CheckCircle, Zap, Target,
-  Clock, Repeat, Lightbulb, ArrowLeft, Lock
+  Brain, BookOpen, ChevronRight, Check, Zap, Target,
+  Clock, Repeat, Lightbulb, Lock
 } from 'lucide-react';
+import { TopBar, TerminalFooter, Accordion, AccordionItem, GradingStepper } from './terminal';
 
 export function BanqueoLanding() {
   const navigate = useNavigate();
@@ -48,112 +49,93 @@ export function BanqueoLanding() {
     'Al finalizar, repite con más preguntas aleatorias'
   ];
 
+  const comparison = [
+    {
+      icon: Brain,
+      title: 'Banqueo Histórico',
+      items: ['10 preguntas por curso', 'Sin límite de tiempo', 'Respuesta inmediata', 'Elige el curso a practicar', 'Enfocado en aprender']
+    },
+    {
+      icon: BookOpen,
+      title: 'Simulacro completo',
+      items: ['Todas las preguntas del examen', 'Tiempo oficial de cada examen', 'Respuestas al finalizar', 'Todos los cursos del examen', 'Enfocado en evaluar']
+    }
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-purple-600 to-indigo-700 text-white">
-        <div className="container mx-auto px-4 py-6">
-          <button
-            onClick={() => navigate('/')}
-            className="flex items-center gap-2 text-purple-200 hover:text-white transition-colors mb-4"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Volver al inicio
-          </button>
+    <div className="min-h-screen bg-white flex flex-col">
+      <TopBar />
 
-          <div className="max-w-4xl mx-auto text-center py-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-white/10 backdrop-blur-sm rounded-2xl mb-4">
-              <Brain className="w-8 h-8" />
-            </div>
-
-            <h1 className="text-3xl md:text-4xl font-bold mb-4">
-              Banqueo Histórico
-            </h1>
-
-            <p className="text-lg text-purple-100 mb-6 max-w-2xl mx-auto">
-              Practica con preguntas de exámenes anteriores usando el método <strong>Active Recall</strong>.
-              Retroalimentación inmediata después de cada pregunta.
-            </p>
-
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 text-amber-900 rounded-full text-sm font-medium">
+      {/* Hero */}
+      <section className="border-b border-line">
+        <div className="max-w-terminal mx-auto px-4 lg:px-8 py-12 md:py-16">
+          <p className="eyebrow">Banqueo · Active Recall</p>
+          <h1 className="title-screen text-[28px] md:text-[32px] mt-3">Banqueo histórico</h1>
+          <p className="mt-4 max-w-[640px] text-[17px] leading-relaxed text-muted">
+            Practica con preguntas de exámenes anteriores usando el método <strong className="text-ink">Active Recall</strong>.
+            Retroalimentación inmediata después de cada pregunta.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <button onClick={() => navigate('/banqueo/acceso')} className="btn-primary">
+              Acceder al Banqueo
+              <ChevronRight className="w-5 h-5" />
+            </button>
+            <span className="pill">
               <Lock className="w-4 h-4" />
               Exclusivo para usuarios inscritos
-            </div>
+            </span>
           </div>
         </div>
-      </header>
+      </section>
 
       {/* What is Active Recall */}
-      <section className="py-12 bg-white">
-        <div className="container mx-auto px-4">
-          <div className="max-w-4xl mx-auto">
-            <div className="text-center mb-8">
-              <span className="inline-block px-4 py-1.5 bg-purple-100 text-purple-700 rounded-full text-sm font-medium mb-4">
-                Método Científico
-              </span>
-              <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-4">
-                ¿Qué es el Active Recall?
-              </h2>
+      <section className="bg-paper border-b border-line">
+        <div className="max-w-terminal mx-auto px-4 lg:px-8 py-12">
+          <p className="label-section">Método científico</p>
+          <h2 className="font-display font-bold text-2xl md:text-[28px] text-ink mt-2 mb-4">¿Qué es el Active Recall?</h2>
+          <p className="text-ink/90 leading-relaxed max-w-[68ch] mb-6">
+            El <strong>Active Recall</strong> (Recuerdo Activo) es una técnica de estudio
+            que consiste en intentar recordar información de memoria en lugar de simplemente releerla.
+            Los estudios científicos demuestran que esta técnica es <strong>2-3 veces más efectiva</strong> que
+            los métodos tradicionales de estudio.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h3 className="font-semibold text-ink mb-2">Estudio pasivo <span className="text-muted font-normal">(menos efectivo)</span></h3>
+              <ul className="text-sm text-muted space-y-1">
+                <li>· Releer apuntes</li>
+                <li>· Subrayar textos</li>
+                <li>· Ver videos sin pausar</li>
+              </ul>
             </div>
-
-            <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl p-6 md:p-8">
-              <p className="text-slate-700 leading-relaxed mb-6">
-                El <strong className="text-purple-700">Active Recall</strong> (Recuerdo Activo) es una técnica de estudio
-                que consiste en intentar recordar información de memoria en lugar de simplemente releerla.
-                Los estudios científicos demuestran que esta técnica es <strong>2-3 veces más efectiva</strong> que
-                los métodos tradicionales de estudio.
-              </p>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="bg-white rounded-xl p-4">
-                  <h3 className="font-bold text-red-600 mb-2">Estudio Pasivo (Menos Efectivo)</h3>
-                  <ul className="text-sm text-slate-600 space-y-1">
-                    <li>- Releer apuntes</li>
-                    <li>- Subrayar textos</li>
-                    <li>- Ver videos sin pausar</li>
-                  </ul>
-                </div>
-                <div className="bg-white rounded-xl p-4">
-                  <h3 className="font-bold text-green-600 mb-2">Active Recall (Más Efectivo)</h3>
-                  <ul className="text-sm text-slate-600 space-y-1">
-                    <li>- Resolver preguntas de memoria</li>
-                    <li>- Flashcards con autocorrección</li>
-                    <li>- Banqueo con retroalimentación</li>
-                  </ul>
-                </div>
-              </div>
+            <div className="card p-5">
+              <h3 className="font-semibold text-ink mb-2">Active Recall <span className="text-muted font-normal">(más efectivo)</span></h3>
+              <ul className="text-sm text-muted space-y-1">
+                <li>· Resolver preguntas de memoria</li>
+                <li>· Flashcards con autocorrección</li>
+                <li>· Banqueo con retroalimentación</li>
+              </ul>
             </div>
           </div>
         </div>
       </section>
 
       {/* Benefits */}
-      <section className="py-12 bg-slate-50">
-        <div className="container mx-auto px-4">
-          <div className="text-center mb-10">
-            <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-4">
-              Beneficios del Banqueo Histórico
-            </h2>
-          </div>
+      <section>
+        <div className="max-w-terminal mx-auto px-4 lg:px-8 py-12">
+          <p className="label-section">Beneficios</p>
+          <h2 className="font-display font-bold text-2xl md:text-[28px] text-ink mt-2 mb-8">Por qué practicar con el banqueo</h2>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
             {benefits.map((benefit, index) => (
-              <div
-                key={index}
-                className="flex gap-4 p-5 rounded-xl bg-white shadow-sm hover:shadow-md transition-shadow"
-              >
-                <div className="flex-shrink-0">
-                  <div className="w-10 h-10 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center">
-                    <benefit.icon className="w-5 h-5" />
-                  </div>
+              <div key={index} className="card p-5 flex gap-4">
+                <div className="w-10 h-10 shrink-0 bg-jungle-100 text-jungle-800 rounded-control flex items-center justify-center">
+                  <benefit.icon className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-800 mb-1">
-                    {benefit.title}
-                  </h3>
-                  <p className="text-sm text-slate-600">
-                    {benefit.description}
-                  </p>
+                  <h3 className="font-semibold text-ink mb-1">{benefit.title}</h3>
+                  <p className="text-sm text-muted leading-relaxed">{benefit.description}</p>
                 </div>
               </div>
             ))}
@@ -161,26 +143,42 @@ export function BanqueoLanding() {
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="py-12 bg-white">
-        <div className="container mx-auto px-4">
-          <div className="max-w-3xl mx-auto">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-4">
-                ¿Cómo funciona?
-              </h2>
-            </div>
-
-            <div className="space-y-4">
+      {/* How it works + comparison */}
+      <section className="bg-paper border-y border-line">
+        <div className="max-w-terminal mx-auto px-4 lg:px-8 py-12 grid lg:grid-cols-[1fr_1fr] gap-10">
+          <div>
+            <p className="label-section">Paso a paso</p>
+            <h2 className="font-display font-bold text-2xl md:text-[28px] text-ink mt-2 mb-6">¿Cómo funciona?</h2>
+            <ol className="card divide-y divide-line">
               {howItWorks.map((step, index) => (
-                <div
-                  key={index}
-                  className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl"
-                >
-                  <div className="w-10 h-10 bg-purple-600 text-white rounded-full flex items-center justify-center font-bold flex-shrink-0">
+                <li key={index} className="flex items-center gap-4 px-5 py-4">
+                  <span className="num w-7 h-7 shrink-0 rounded-full border border-line bg-white text-jungle-800 text-sm font-semibold flex items-center justify-center">
                     {index + 1}
+                  </span>
+                  <p className="text-ink">{step}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div>
+            <p className="label-section">Comparación</p>
+            <h2 className="font-display font-bold text-2xl md:text-[28px] text-ink mt-2 mb-6">Banqueo vs. simulacro</h2>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {comparison.map(col => (
+                <div key={col.title} className="card p-5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <col.icon className="w-5 h-5 text-jungle-800" />
+                    <h3 className="font-semibold text-ink">{col.title}</h3>
                   </div>
-                  <p className="text-slate-700">{step}</p>
+                  <ul className="space-y-2.5">
+                    {col.items.map(item => (
+                      <li key={item} className="flex items-start gap-2 text-sm text-muted">
+                        <Check className="w-4 h-4 text-jungle-600 shrink-0 mt-0.5" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
@@ -188,113 +186,39 @@ export function BanqueoLanding() {
         </div>
       </section>
 
-      {/* Comparison with Simulacro */}
-      <section className="py-12 bg-slate-50">
-        <div className="container mx-auto px-4">
-          <div className="max-w-4xl mx-auto">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-4">
-                Banqueo vs Simulacro
-              </h2>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-xl p-6 border-2 border-purple-200">
-                <div className="flex items-center gap-3 mb-4">
-                  <Brain className="w-8 h-8 text-purple-600" />
-                  <h3 className="text-xl font-bold text-purple-700">Banqueo Histórico</h3>
+      {/* Reglas (acordeones 6.8) */}
+      <section className="flex-1">
+        <div className="max-w-terminal mx-auto px-4 lg:px-8 py-12">
+          <div className="max-w-[700px]">
+            <Accordion>
+              <AccordionItem title="Reglas del banqueo">
+                Cada sesión trae 10 preguntas aleatorias del curso elegido. No hay límite de tiempo.
+                Al responder, la alternativa queda fija y ves de inmediato si acertaste y la justificación.
+              </AccordionItem>
+              <AccordionItem title="Cómo se califica">
+                <GradingStepper
+                  steps={[
+                    { title: 'Responder', text: 'Elige una alternativa y confírmala.' },
+                    { title: 'Corregir', text: 'Ves al instante la respuesta correcta y su justificación.' },
+                    { title: 'Revisar', text: 'Al final, tu porcentaje de aciertos del curso.' },
+                  ]}
+                />
+              </AccordionItem>
+              <AccordionItem title="¿Quién puede acceder?">
+                El banqueo es exclusivo para usuarios inscritos: ingresa con tu DNI y el correo con el que te inscribiste.
+                <div className="mt-4">
+                  <button onClick={() => navigate('/banqueo/acceso')} className="btn-secondary">
+                    Ir al acceso
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
-                <ul className="space-y-3">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-purple-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">10 preguntas por curso</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-purple-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Sin límite de tiempo</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-purple-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Respuesta inmediata</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-purple-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Elige el curso a practicar</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-purple-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Enfocado en aprender</span>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="bg-white rounded-xl p-6 border-2 border-cyan-200">
-                <div className="flex items-center gap-3 mb-4">
-                  <BookOpen className="w-8 h-8 text-cyan-600" />
-                  <h3 className="text-xl font-bold text-cyan-700">Simulacro completo</h3>
-                </div>
-                <ul className="space-y-3">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Todas las preguntas del examen</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Tiempo oficial de cada examen</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Respuestas al finalizar</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Todos los cursos del examen</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle className="w-5 h-5 text-cyan-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-slate-600">Enfocado en evaluar</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
+              </AccordionItem>
+            </Accordion>
           </div>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="py-12 bg-gradient-to-r from-purple-600 to-indigo-700">
-        <div className="container mx-auto px-4 text-center">
-          <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
-            ¿Listo para practicar?
-          </h2>
-          <p className="text-purple-100 mb-8 max-w-xl mx-auto">
-            Accede al banco de preguntas y mejora tu retención con Active Recall
-          </p>
-          <button
-            onClick={() => navigate('/banqueo/acceso')}
-            className="btn bg-white text-purple-700 hover:bg-purple-50 text-lg px-10 py-4 shadow-xl"
-          >
-            Acceder al Banqueo
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-slate-800 text-slate-400 py-6">
-        <div className="container mx-auto px-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="flex items-center gap-2">
-              <Brain className="w-5 h-5" />
-              <span className="font-semibold text-white">Banqueo Histórico</span>
-              <span className="hidden sm:inline">- Simulacros SINAPSIS</span>
-            </p>
-            <p className="text-sm text-center md:text-right">
-              Técnica Active Recall para mejor retención
-            </p>
-          </div>
-        </div>
-      </footer>
+      <TerminalFooter />
     </div>
   );
 }

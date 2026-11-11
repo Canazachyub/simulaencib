@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { areaImg } from '../utils/imagenes';
 import { useNavigate } from 'react-router-dom';
 import {
-  Brain, ArrowLeft, Activity, Heart, Microscope, Zap, Target, FileText, BookOpen, Loader2, AlertCircle
+  Brain, ArrowLeft, Activity, Heart, Microscope, Zap, Target, FileText, BookOpen, Loader2, AlertCircle, ChevronRight, Layers
 } from 'lucide-react';
-import { getConfig } from '../services/api';
+import { getConfig, getBanqueoCatalog, BackendViejoError, type BanqueoCatalog } from '../services/api';
+import { leerProgreso, coberturaCurso, sesionPendiente, borrarSesion } from '../utils/progresoBanqueo';
+import { PlayCircle, X as XIcon } from 'lucide-react';
 import { useExamCatalog, useExamStore } from '../hooks/useExam';
-import { ENCIB_FALLBACK_CONFIG, SITE_NAME } from '../types';
+import { ENCIB_FALLBACK_CONFIG } from '../types';
 import type { Course } from '../types';
 import { ExamSelector } from './ExamSelector';
+import { TopBar, TerminalFooter, Accordion, AccordionItem } from './terminal';
+import { FlashcardReview, readDeck, type StudyCard } from './study';
 
 const BANQUEO_EXAM_KEY = 'banqueo_exam';
 
@@ -29,6 +34,9 @@ export function BanqueoCourseSelection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  // Mazo personal de fichas (localStorage)
+  const [deck, setDeck] = useState<StudyCard[] | null>(null);
+  const deckCount = readDeck(examId).length;
 
   // Check if user has access
   useEffect(() => {
@@ -74,6 +82,25 @@ export function BanqueoCourseSelection() {
     };
   }, [examId, examsLoaded, reloadKey]);
 
+  // Catálogo del banqueo v2 (totales por curso) — si el backend es el viejo, aviso discreto
+  const [catalog, setCatalog] = useState<BanqueoCatalog | null>(null);
+  const [catalogNotice, setCatalogNotice] = useState('');
+  const [pendiente, setPendiente] = useState(() => sesionPendiente());
+  useEffect(() => {
+    if (!examsLoaded) return;
+    let cancelled = false;
+    setCatalog(null);
+    setCatalogNotice('');
+    getBanqueoCatalog(examId)
+      .then(c => { if (!cancelled) setCatalog(c); })
+      .catch(err => {
+        if (cancelled) return;
+        setCatalogNotice(err instanceof BackendViejoError ? 'Actualiza el servidor para filtros y progreso' : '');
+      });
+    return () => { cancelled = true; };
+  }, [examId, examsLoaded]);
+  const progreso = useMemo(() => leerProgreso(examId), [examId]);
+
   const handleSelectExam = (id: string) => {
     setExamId(id);
     try {
@@ -103,142 +130,151 @@ export function BanqueoCourseSelection() {
     return icons[courseName] || BookOpen;
   };
 
-  const getCourseColor = (index: number) => {
-    const colors = [
-      'from-red-500 to-rose-600',
-      'from-pink-500 to-fuchsia-600',
-      'from-purple-500 to-violet-600',
-      'from-blue-500 to-indigo-600',
-      'from-cyan-500 to-teal-600',
-      'from-green-500 to-emerald-600',
-      'from-amber-500 to-orange-600',
-      'from-slate-500 to-slate-700'
-    ];
-    return colors[index % colors.length];
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-purple-600 to-indigo-700 text-white">
-        <div className="container mx-auto px-4 py-6">
-          <button
-            onClick={() => navigate('/banqueo')}
-            className="flex items-center gap-2 text-purple-200 hover:text-white transition-colors mb-4"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Salir del Banqueo
-          </button>
+    <div className="min-h-screen bg-white flex flex-col">
+      {deck && (
+        <FlashcardReview examId={examId} cards={deck} title={`Mis fichas · ${examName}`} onClose={() => setDeck(null)} />
+      )}
+      <TopBar>
+        {exams.length > 1 && (
+          <ExamSelector
+            exams={exams}
+            selectedId={examId}
+            onSelect={handleSelectExam}
+            variant="light"
+          />
+        )}
+      </TopBar>
 
-          <div className="max-w-4xl mx-auto text-center py-6">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-white/10 backdrop-blur-sm rounded-2xl mb-3">
-              <Brain className="w-7 h-7" />
-            </div>
-            <h1 className="text-2xl md:text-3xl font-bold mb-2">
-              Selecciona un Curso
-            </h1>
-            <p className="text-purple-100">
-              Banqueo {examName}: elige el curso que deseas practicar (10 preguntas aleatorias)
-            </p>
+      <main className="flex-1 max-w-terminal w-full mx-auto px-4 lg:px-8 py-8">
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
+          <div>
+            <p className="meta">{examName} · Banqueo · {catalog ? 'arma tu práctica por tema y año' : '10 preguntas aleatorias'}</p>
+            <h1 className="title-screen text-[28px] md:text-[32px] mt-1">Elige un curso</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDeck(readDeck(examId))}
+              disabled={deckCount === 0}
+              title={deckCount === 0 ? 'Aún no tienes fichas: márcalas con "Repasar" al terminar una práctica' : 'Repasar tus fichas guardadas'}
+              className="btn-secondary min-h-[40px] py-2 px-4 text-sm"
+            >
+              <Layers className="w-4 h-4" />
+              Mis fichas <span className="num text-muted">({deckCount})</span>
+            </button>
+            <button onClick={() => navigate('/banqueo')} className="btn-ghost">
+              <ArrowLeft className="w-4 h-4" />
+              Salir del banqueo
+            </button>
           </div>
         </div>
-      </header>
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Selector de examen */}
-        {exams.length > 1 && (
-          <div className="max-w-6xl mx-auto mb-8">
-            <p className="text-sm text-slate-600 mb-2">Examen</p>
-            <ExamSelector
-              exams={exams}
-              selectedId={examId}
-              onSelect={handleSelectExam}
-              variant="light"
-            />
+        {pendiente && (
+          <div className="mb-5 rounded-2xl bg-jungle-900 text-white px-4 py-3 flex flex-wrap items-center gap-3">
+            <PlayCircle className="w-6 h-6 text-lime-400 shrink-0" />
+            <p className="flex-1 min-w-[180px] text-sm">
+              Tienes un banqueo a medias de <strong>{pendiente.course}</strong>{' '}
+              <span className="num text-white/70">
+                ({pendiente.states.filter(s => s?.answered).length} de {pendiente.ids.length}{pendiente.modo === 'examen' ? ' · examen' : ''})
+              </span>
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate(`/banqueo/practica/${encodeURIComponent(pendiente.course)}?examen=${encodeURIComponent(pendiente.exam)}&continuar=1`)}
+                className="btn min-h-[40px] py-2 bg-lime-400 text-jungle-900 hover:bg-lime-500"
+              >
+                Continuar donde lo dejé
+              </button>
+              <button
+                type="button"
+                onClick={() => { borrarSesion(); setPendiente(null); }}
+                className="w-10 h-10 grid place-items-center rounded-full text-white/60 hover:text-white hover:bg-white/10"
+                aria-label="Descartar banqueo a medias"
+                title="Descartar"
+              >
+                <XIcon className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Course Grid */}
         {loading ? (
-          <div className="text-center py-12">
-            <Loader2 className="w-10 h-10 text-purple-600 animate-spin mx-auto mb-3" />
-            <p className="text-slate-600">Cargando cursos de {examName}...</p>
+          <div className="text-center py-16">
+            <Loader2 className="w-8 h-8 text-jungle-600 animate-spin mx-auto mb-3" />
+            <p className="text-muted">Cargando cursos de {examName}...</p>
           </div>
         ) : error ? (
-          <div className="max-w-md mx-auto text-center py-12">
-            <AlertCircle className="w-10 h-10 text-red-500 mx-auto mb-3" />
-            <p className="text-slate-600 mb-4">{error}</p>
-            <button
-              onClick={() => setReloadKey(k => k + 1)}
-              className="btn-primary bg-purple-600 hover:bg-purple-700"
-            >
+          <div className="max-w-md mx-auto text-center py-16">
+            <AlertCircle className="w-8 h-8 text-wrong mx-auto mb-3" />
+            <p className="text-muted mb-4">{error}</p>
+            <button onClick={() => setReloadKey(k => k + 1)} className="btn-primary">
               Reintentar
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 max-w-6xl mx-auto">
-            {courses.map((course, index) => {
-              const Icon = getCourseIcon(course.name);
-              const gradientColor = getCourseColor(index);
-
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {courses.map((course) => {
+              const cat = catalog?.courses.find(c => c.name === course.name);
+              const cob = cat ? coberturaCurso(progreso, course.name, cat.total) : null;
               return (
                 <button
                   key={`${course.code}-${course.name}`}
                   onClick={() => handleSelectCourse(course.name)}
-                  className="group relative overflow-hidden rounded-2xl p-6 text-left transition-all duration-300 hover:scale-105 hover:shadow-xl"
+                  className="group card p-5 text-left flex items-center gap-4 hover:border-jungle-600 hover:bg-paper transition-colors min-w-0"
                 >
-                  {/* Background */}
-                  <div className={`absolute inset-0 bg-gradient-to-br ${gradientColor}`} />
-
-                  {/* Decorative circles */}
-                  <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-white/10 rounded-full blur-lg" />
-                  <div className="absolute right-8 bottom-8 w-16 h-16 bg-white/5 rounded-full" />
-
-                  {/* Content */}
-                  <div className="relative z-10 text-white">
-                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-4">
-                      <Icon className="w-6 h-6" />
-                    </div>
-                    <h3 className="text-lg font-bold mb-1">{course.name}</h3>
-                    <p className="text-sm text-white/80">10 preguntas</p>
-                  </div>
-
-                  {/* Hover effect */}
-                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <img
+                    src={areaImg(course.name)}
+                    alt=""
+                    aria-hidden
+                    draggable={false}
+                    className="w-14 h-14 shrink-0 object-contain transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-3"
+                  />
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-semibold text-ink leading-snug">{course.name}</span>
+                    {cob ? (
+                      <>
+                        <span className="block text-[12px] text-muted mt-1 num">
+                          vistas {cob.vistas} de {cob.total} ({cob.pct} %)
+                          {cob.pctAcierto !== null && <> · aciertas {cob.pctAcierto} %</>}
+                        </span>
+                        <span className="block mt-1.5 h-1.5 rounded-full bg-line overflow-hidden" aria-hidden>
+                          <span className="block h-full rounded-full bg-jungle-600" style={{ width: `${cob.total ? (cob.vistas / cob.total) * 100 : 0}%` }} />
+                        </span>
+                        {cob.repasar > 0 && (
+                          <span className="inline-flex items-center mt-2 h-6 px-2 rounded-full bg-warning-bg text-warning text-[11px] font-bold num">
+                            {cob.repasar} para repasar hoy
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="block text-[13px] text-muted mt-0.5">{catalog ? 'Sin preguntas' : '10 preguntas'}</span>
+                    )}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-subtle group-hover:text-jungle-800 shrink-0" />
                 </button>
               );
             })}
           </div>
         )}
 
-        {/* Info Box */}
-        <div className="max-w-2xl mx-auto mt-8">
-          <div className="bg-purple-50 border border-purple-200 rounded-xl p-5">
-            <h3 className="font-bold text-purple-800 mb-2 flex items-center gap-2">
-              <Brain className="w-5 h-5" />
-              Método Active Recall
-            </h3>
-            <p className="text-sm text-purple-700">
+        {catalogNotice && !loading && (
+          <p className="mt-4 text-[12px] text-subtle">{catalogNotice}</p>
+        )}
+
+        <div className="max-w-[700px] mt-10">
+          <Accordion>
+            <AccordionItem title="Método Active Recall" icon={<Brain className="w-4 h-4" />}>
               Después de responder cada pregunta, verás inmediatamente si tu respuesta fue correcta
               y cuál era la respuesta correcta. Este método de retroalimentación inmediata
               mejora significativamente la retención de información.
-            </p>
-          </div>
+            </AccordionItem>
+          </Accordion>
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-800 text-slate-400 py-6 mt-auto">
-        <div className="container mx-auto px-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="flex items-center gap-2">
-              <Brain className="w-5 h-5" />
-              <span className="font-semibold text-white">Banqueo Histórico</span>
-            </p>
-            <p className="text-sm">{SITE_NAME} - Active Recall</p>
-          </div>
-        </div>
-      </footer>
+      <TerminalFooter />
     </div>
   );
 }

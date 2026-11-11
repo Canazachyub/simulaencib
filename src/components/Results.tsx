@@ -1,27 +1,29 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
+import { mascota } from '../utils/imagenes';
 import { useNavigate } from 'react-router-dom';
 import {
-  Trophy, Clock, Target, TrendingUp, RotateCcw,
-  CheckCircle, XCircle, User, CreditCard, GraduationCap, Calendar,
-  Grid3X3, ChevronLeft, ChevronRight, Eye, Table2, BarChart3, History, Award, Stethoscope
+  Trophy, RotateCcw, CheckCircle, XCircle, ChevronLeft, ChevronRight, History, Target
 } from 'lucide-react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  Cell, LineChart, Line
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line
 } from 'recharts';
 import { useExamStore } from '../hooks/useExam';
 import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES, SITE_NAME } from '../types';
-import { formatTimeReadable, formatDate, getColorForPercentage, indexToLetter, formatVigesimalScore, formatPoints } from '../utils/calculations';
+import { formatTimeReadable, formatDate, indexToLetter, formatVigesimalScore, formatPoints } from '../utils/calculations';
 import { PDFGenerator } from './PDFGenerator';
 import { saveScore, getUserHistory, type UserHistory } from '../services/api';
+import { TopBar, TerminalFooter, SectionLabel } from './terminal';
+import { FlashcardReview, Sparkline, toCard, type StudyCard } from './study';
 import clsx from 'clsx';
 
-interface ChartDataItem {
-  name: string;
-  fullName: string;
-  percentage: number;
-  correct: number;
-  total: number;
+type ReviewFilter = 'all' | 'wrong' | 'blank';
+type AnswerState = 'correct' | 'wrong' | 'blank';
+
+/** Colores 6.9: verde ≥ 70 %, ámbar 50–69 %, rojo < 50 %. */
+function barTone(percentage: number): { bar: string; text: string } {
+  if (percentage >= 70) return { bar: 'bg-correct', text: 'text-correct' };
+  if (percentage >= 50) return { bar: 'bg-warning', text: 'text-warning' };
+  return { bar: 'bg-wrong', text: 'text-wrong' };
 }
 
 export function Results() {
@@ -29,10 +31,12 @@ export function Results() {
   const { result, questions, resetExam } = useExamStore();
   const [showReview, setShowReview] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [activeTab, setActiveTab] = useState<'review' | 'chart' | 'details' | 'history'>('review');
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
+  const [activeTab, setActiveTab] = useState<'review' | 'details' | 'history'>('review');
   const [userHistory, setUserHistory] = useState<UserHistory | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const scoreSaved = useRef(false);
+  const [cards, setCards] = useState<StudyCard[] | null>(null);
 
   useEffect(() => {
     if (!result) {
@@ -83,9 +87,18 @@ export function Results() {
     return map;
   }, [result?.answers]);
 
+  // Estado de cada pregunta (correcta / incorrecta / en blanco)
+  const stateOf = useMemo(() => {
+    return (questionId: string): AnswerState => {
+      const a = answerMap.get(questionId);
+      if (!a || a.selectedOption === null) return 'blank';
+      return a.isCorrect ? 'correct' : 'wrong';
+    };
+  }, [answerMap]);
+
   // Agrupar preguntas por curso para el navegador
   const questionsByCourse = useMemo(() => {
-    const groups: { course: string; questions: { index: number; isCorrect: boolean }[] }[] = [];
+    const groups: { course: string; questions: { index: number; state: AnswerState }[] }[] = [];
     let currentCourse = '';
 
     questions.forEach((q, idx) => {
@@ -93,15 +106,19 @@ export function Results() {
         currentCourse = q.subject;
         groups.push({ course: currentCourse, questions: [] });
       }
-      const answer = answerMap.get(q.id);
-      groups[groups.length - 1].questions.push({
-        index: idx,
-        isCorrect: answer?.isCorrect ?? false
-      });
+      groups[groups.length - 1].questions.push({ index: idx, state: stateOf(q.id) });
     });
 
     return groups;
-  }, [questions, answerMap]);
+  }, [questions, stateOf]);
+
+  // Índices visibles según el filtro de revisión
+  const filteredIndexes = useMemo(() => {
+    return questions
+      .map((q, idx) => ({ idx, state: stateOf(q.id) }))
+      .filter(({ state }) => reviewFilter === 'all' || state === reviewFilter)
+      .map(({ idx }) => idx);
+  }, [questions, stateOf, reviewFilter]);
 
   if (!result) return null;
 
@@ -116,17 +133,8 @@ export function Results() {
   const universityInfo = ALL_UNIVERSITIES.find(u => u.code === result.student.university);
   const universityName = universityInfo ? universityInfo.name : result.student.university;
 
-  const chartData: ChartDataItem[] = result.courseResults.map((course) => ({
-    name: course.name.length > 24 ? course.name.slice(0, 23) + '…' : course.name,
-    fullName: course.name,
-    percentage: course.percentage,
-    correct: course.correctAnswers,
-    total: course.totalQuestions
-  }));
-
-  // Con muchos cursos (p. ej. 32 especialidades) la barra se adelgaza
-  const chartBarSize = chartData.length > 20 ? 16 : chartData.length > 12 ? 22 : 32;
-  const chartRowHeight = chartBarSize + 14;
+  // Barras por curso: de peor a mejor
+  const sortedCourses = [...result.courseResults].sort((a, b) => a.percentage - b.percentage);
 
   const handleRestart = () => {
     resetExam();
@@ -135,6 +143,8 @@ export function Results() {
 
   const totalCorrect = result.correctAnswers;
   const totalQuestions = result.totalQuestions;
+  const blankCount = result.answers.filter(a => a.selectedOption === null).length;
+  const wrongCount = totalQuestions - totalCorrect - blankCount;
   const averageTimePerQuestion = result.answers.length > 0
     ? result.answers.reduce((sum, a) => sum + a.timeSpent, 0) / result.answers.length
     : 0;
@@ -142,812 +152,621 @@ export function Results() {
   const currentQuestion = questions[reviewIndex];
   const currentAnswer = currentQuestion ? answerMap.get(currentQuestion.id) : null;
 
+  // Navegación del detalle dentro del filtro activo
+  const posInFilter = filteredIndexes.indexOf(reviewIndex);
+  const prevIndex = posInFilter > 0 ? filteredIndexes[posInFilter - 1] : null;
+  const nextIndex = posInFilter >= 0 && posInFilter < filteredIndexes.length - 1 ? filteredIndexes[posInFilter + 1] : null;
+
+  const kpis = [
+    { label: 'Correctas', value: String(totalCorrect), tone: 'text-correct' },
+    { label: 'Incorrectas', value: String(wrongCount), tone: 'text-wrong' },
+    { label: 'En blanco', value: String(blankCount), tone: 'text-ink' },
+    { label: 'Tiempo', value: formatTimeReadable(result.totalTime), tone: 'text-ink' }
+  ];
+
+  const tabs: { id: typeof activeTab; label: string }[] = [
+    { id: 'review', label: 'Revisión' },
+    { id: 'details', label: 'Detalle' },
+    { id: 'history', label: 'Historial' }
+  ];
+
+  const filters: { id: ReviewFilter; label: string; count: number }[] = [
+    { id: 'all', label: 'Todas', count: questions.length },
+    { id: 'wrong', label: 'Incorrectas', count: wrongCount },
+    { id: 'blank', label: 'En blanco', count: blankCount }
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 py-8 px-4">
-      <div className="max-w-4xl mx-auto space-y-8">
-        {/* Score Card - ENCIB con nota vigesimal */}
-        <div className="card p-8 text-center animate-fade-in">
-          <div
-            className={clsx(
-              'inline-flex items-center gap-2 px-4 py-2 rounded-full mb-6',
-              {
-                'bg-emerald-100 text-emerald-700': result.performanceLevel === 'excellent',
-                'bg-blue-100 text-blue-700': result.performanceLevel === 'good',
-                'bg-amber-100 text-amber-700': result.performanceLevel === 'regular',
-                'bg-red-100 text-red-700': result.performanceLevel === 'needs_practice'
-              }
-            )}
-          >
-            <Trophy className="w-5 h-5" />
-            <span className="font-semibold">{performanceInfo.title}</span>
-          </div>
+    <div className="min-h-screen flex flex-col bg-white">
+      {cards && (
+        <FlashcardReview examId={result.examId} cards={cards} title={`Fichas · ${examName}`} onClose={() => setCards(null)} />
+      )}
+      <TopBar />
 
-          {/* Nota en la escala del examen */}
-          <div className="mb-4">
-            <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">
-              Simulacro {examName} · Nota
-            </h2>
-            <h1 className="text-5xl md:text-6xl font-extrabold text-cyan-600">
-              {formatVigesimalScore(result.vigesimalScore)}
-              <span className="text-2xl text-slate-400 font-normal"> / {scaleMax}</span>
-            </h1>
-            {passing !== null && (
-              <div
-                className={clsx(
-                  'inline-flex items-center gap-2 mt-4 px-4 py-1.5 rounded-full text-sm font-bold',
-                  result.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                )}
-              >
-                {result.passed ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                {result.passed ? 'Aprobado' : 'Desaprobado'}
-                <span className="font-normal">(nota mínima {passing})</span>
-              </div>
-            )}
-          </div>
-
-          {/* Correctas y puntos */}
-          <div className="mb-6">
-            <p className="text-slate-600">
-              <span className="font-bold text-slate-800">{result.correctAnswers}</span> de {result.totalQuestions} respuestas correctas
-              <span className="text-slate-400 mx-2">|</span>
-              {result.percentage.toFixed(1)}%
-              {hasWeightedPoints && (
-                <>
-                  <span className="text-slate-400 mx-2">|</span>
-                  {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)} puntos
-                </>
-              )}
-            </p>
-          </div>
-
-          <p className="text-lg text-slate-700 max-w-xl mx-auto">
-            {performanceInfo.message}
+      <main className="flex-1 max-w-terminal w-full mx-auto px-4 lg:px-8 py-8 lg:py-10 space-y-10">
+        {/* Cabecera + nota */}
+        <section>
+          <p className="meta">
+            {examName} · Simulacro · {totalQuestions} preguntas · {formatDate(result.date)}
           </p>
-        </div>
+          <h1 className="title-screen text-[28px] md:text-[32px] mt-1">Resultados {examName}</h1>
 
-        {/* Student Info */}
-        <div className="card p-6 animate-fade-in">
-          <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <User className="w-5 h-5 text-cyan-600" />
-            Datos del examen
-          </h2>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="flex items-center gap-3 text-slate-600">
-              <CreditCard className="w-5 h-5 text-slate-400" />
-              <span>DNI: <strong className="text-slate-800">{result.student.dni}</strong></span>
-            </div>
-            <div className="flex items-center gap-3 text-slate-600">
-              <User className="w-5 h-5 text-slate-400" />
-              <span className="truncate">Nombre: <strong className="text-slate-800">{result.student.fullName}</strong></span>
-            </div>
-            <div className="flex items-start gap-3 text-slate-600">
-              <GraduationCap className="w-5 h-5 text-slate-400 mt-0.5" />
-              <span className="truncate">Universidad: <strong className="text-slate-800">{universityName}</strong></span>
-            </div>
-            <div className="flex items-center gap-3 text-slate-600">
-              <Calendar className="w-5 h-5 text-slate-400" />
-              <span className="text-sm">{formatDate(result.date)}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-fade-in">
-          <div className="card p-4 text-center">
-            <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{totalCorrect}</p>
-            <p className="text-sm text-slate-500">Correctas</p>
-          </div>
-          <div className="card p-4 text-center">
-            <XCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{totalQuestions - totalCorrect}</p>
-            <p className="text-sm text-slate-500">Incorrectas</p>
-          </div>
-          <div className="card p-4 text-center">
-            <Clock className="w-8 h-8 text-cyan-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{formatTimeReadable(result.totalTime)}</p>
-            <p className="text-sm text-slate-500">Tiempo total</p>
-          </div>
-          <div className="card p-4 text-center">
-            <Target className="w-8 h-8 text-amber-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{Math.round(averageTimePerQuestion)}s</p>
-            <p className="text-sm text-slate-500">Prom. por pregunta</p>
-          </div>
-        </div>
-
-        {/* Tabs de navegación */}
-        <div className="card p-2 animate-fade-in">
-          <div className="flex gap-1">
-            <button
-              onClick={() => setActiveTab('review')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'review'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <Grid3X3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Revisión</span>
-              <span className="sm:hidden">Revisión</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('chart')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'chart'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Rendimiento</span>
-              <span className="sm:hidden">Gráfico</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('details')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'details'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <Table2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Detalle</span>
-              <span className="sm:hidden">Tabla</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'history'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <History className="w-4 h-4" />
-              <span className="hidden sm:inline">Historial</span>
-              <span className="sm:hidden">Historial</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Tab Content: Revisión de Preguntas */}
-        {activeTab === 'review' && (
-        <>
-        <div className="card p-6 animate-fade-in">
-          <div className="flex items-center justify-between mb-4">
+          <div className="mt-6 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
             <div>
-              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Grid3X3 className="w-5 h-5 text-cyan-600" />
-                Revisión de Preguntas
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Revisa cada pregunta para ver cuáles acertaste y cuáles fallaste
+              <SectionLabel>Nota</SectionLabel>
+              <p className="num font-display font-extrabold text-jungle-800 leading-none mt-2 text-[56px]">
+                {formatVigesimalScore(result.vigesimalScore)}
+                <span className="text-2xl font-semibold text-subtle"> / {scaleMax}</span>
               </p>
-            </div>
-            <button
-              onClick={() => setShowReview(!showReview)}
-              className={clsx(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-                showReview
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              )}
-            >
-              <Eye className="w-4 h-4" />
-              {showReview ? 'Ocultar detalle' : 'Ver detalle'}
-            </button>
-          </div>
-
-          {/* Legend compacta */}
-          <div className="flex flex-wrap gap-4 mb-4 pb-4 border-b border-slate-100 text-sm">
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-emerald-500"></div>
-              <span className="text-slate-600">Correcta</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-red-500"></div>
-              <span className="text-slate-600">Incorrecta</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm ring-2 ring-cyan-500 bg-cyan-100"></div>
-              <span className="text-slate-600">Viendo</span>
-            </div>
-          </div>
-
-          {/* Navigator Grid - 2 columnas en desktop */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {questionsByCourse.map((group, gIdx) => {
-              const correctCount = group.questions.filter(q => q.isCorrect).length;
-              const totalCount = group.questions.length;
-              const percentage = totalCount > 0 ? (correctCount / totalCount) * 100 : 0;
-
-              return (
-                <div
-                  key={gIdx}
-                  className="bg-slate-50 rounded-lg p-3 hover:bg-slate-100 transition-colors"
-                >
-                  {/* Header con nombre y stats */}
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-semibold text-slate-700 truncate flex-1">
-                      {group.course}
-                    </h4>
-                    <span
-                      className={clsx(
-                        'text-xs font-bold px-1.5 py-0.5 rounded ml-2',
-                        percentage >= 60 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                      )}
-                    >
-                      {correctCount}/{totalCount}
-                    </span>
-                  </div>
-
-                  {/* Mini barra de progreso */}
-                  <div className="h-1 bg-slate-200 rounded-full mb-2 overflow-hidden">
-                    <div
-                      className={clsx(
-                        'h-full rounded-full transition-all',
-                        percentage >= 60 ? 'bg-emerald-500' : 'bg-red-500'
-                      )}
-                      style={{ width: `${percentage}%` }}
-                    />
-                  </div>
-
-                  {/* Botones de preguntas */}
-                  <div className="flex flex-wrap gap-1">
-                    {group.questions.map(({ index, isCorrect }) => (
-                      <button
-                        key={index}
-                        onClick={() => {
-                          setReviewIndex(index);
-                          setShowReview(true);
-                        }}
-                        className={clsx(
-                          'w-7 h-7 rounded text-xs font-medium transition-all',
-                          index === reviewIndex && showReview
-                            ? 'ring-2 ring-cyan-500 ring-offset-1 scale-110 z-10'
-                            : '',
-                          isCorrect
-                            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                            : 'bg-red-500 text-white hover:bg-red-600'
-                        )}
-                      >
-                        {index + 1}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Question Detail View */}
-        {showReview && currentQuestion && (
-          <div className="card p-6 animate-fade-in">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800">
-                Pregunta {reviewIndex + 1} de {questions.length}
-              </h3>
-              <span className="px-3 py-1 bg-cyan-100 text-cyan-700 rounded-full text-sm font-medium">
-                {currentQuestion.subject}
-              </span>
-            </div>
-
-            {/* Question Text */}
-            <div className="mb-4">
-              <div
-                className="text-slate-800 leading-relaxed prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{
-                  __html: `<span class="font-semibold text-cyan-600">P${reviewIndex + 1}.</span> ${currentQuestion.questionText}`
-                }}
-              />
-            </div>
-
-            {/* Source File */}
-            {currentQuestion.sourceFile && (
-              <div className="mb-4 text-right">
-                <span className="text-xs italic text-slate-400 font-light">
-                  Fuente: {currentQuestion.sourceFile}
-                </span>
-              </div>
-            )}
-
-            {/* Question Image */}
-            {currentQuestion.imageLink && (
-              <div className="mb-4">
-                <img
-                  src={currentQuestion.imageLink}
-                  alt="Imagen de la pregunta"
-                  className="max-w-full h-auto rounded-lg border border-slate-200 mx-auto"
-                  style={{ maxHeight: '200px' }}
-                />
-              </div>
-            )}
-
-            {/* Options */}
-            <div className="space-y-2 mb-4">
-              {currentQuestion.options.map((option, index) => {
-                const isSelected = currentAnswer?.selectedOption === index;
-                const isCorrectAnswer = currentQuestion.correctAnswer === index;
-
-                let optionStyle = 'border-slate-200 bg-white';
-                if (isCorrectAnswer) {
-                  optionStyle = 'border-emerald-500 bg-emerald-50';
-                } else if (isSelected && !isCorrectAnswer) {
-                  optionStyle = 'border-red-500 bg-red-50';
-                }
-
-                return (
-                  <div
-                    key={index}
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {result.passed !== null && passing !== null && (
+                  <span
                     className={clsx(
-                      'p-3 rounded-lg border-2 flex items-start gap-3',
-                      optionStyle
+                      'inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-sm font-semibold',
+                      result.passed ? 'bg-correct-bg text-correct' : 'bg-wrong-bg text-wrong'
                     )}
                   >
-                    <div
-                      className={clsx(
-                        'flex-shrink-0 w-8 h-8 rounded flex items-center justify-center font-bold text-sm',
-                        isCorrectAnswer
-                          ? 'bg-emerald-500 text-white'
-                          : isSelected
-                            ? 'bg-red-500 text-white'
-                            : 'bg-slate-200 text-slate-600'
-                      )}
-                    >
-                      {isCorrectAnswer ? (
-                        <CheckCircle className="w-5 h-5" />
-                      ) : isSelected ? (
-                        <XCircle className="w-5 h-5" />
-                      ) : (
-                        indexToLetter(index)
-                      )}
-                    </div>
-                    <span
-                      className={clsx(
-                        'flex-1 pt-1 text-sm',
-                        isCorrectAnswer
-                          ? 'text-emerald-700 font-medium'
-                          : isSelected
-                            ? 'text-red-700'
-                            : 'text-slate-600'
-                      )}
-                    >
-                      {option}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Result Badge */}
-            <div
-              className={clsx(
-                'p-3 rounded-lg flex items-center gap-2',
-                currentAnswer?.isCorrect
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : 'bg-red-100 text-red-800'
-              )}
-            >
-              {currentAnswer?.isCorrect ? (
-                <>
-                  <CheckCircle className="w-5 h-5" />
-                  <span className="font-medium">
-                    Respuesta correcta (+{formatPoints(currentQuestion.points)} {currentQuestion.points === 1 ? 'punto' : 'puntos'})
+                    {result.passed ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                    {result.passed ? 'Aprobado' : 'Desaprobado'}
+                    <span className="font-medium opacity-80">· mínimo {passing}</span>
                   </span>
-                </>
-              ) : (
-                <>
-                  <XCircle className="w-5 h-5" />
-                  <span className="font-medium">
-                    {currentAnswer?.selectedOption === null
-                      ? 'Sin responder'
-                      : `Respuesta incorrecta - La correcta es: ${indexToLetter(currentQuestion.correctAnswer)}`}
-                  </span>
-                </>
-              )}
-            </div>
-
-            {/* Justification */}
-            {currentQuestion.justification && (
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-semibold text-blue-700 mb-2">Justificación:</p>
-                <div
-                  className="text-sm text-blue-800 prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: currentQuestion.justification }}
-                />
-              </div>
-            )}
-
-            {/* Navigation */}
-            <div className="flex gap-3 mt-4">
-              <button
-                onClick={() => setReviewIndex(Math.max(0, reviewIndex - 1))}
-                disabled={reviewIndex === 0}
-                className={clsx(
-                  'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-all',
-                  reviewIndex === 0
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                 )}
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Anterior
-              </button>
-              <button
-                onClick={() => setReviewIndex(Math.min(questions.length - 1, reviewIndex + 1))}
-                disabled={reviewIndex === questions.length - 1}
-                className={clsx(
-                  'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-all',
-                  reviewIndex === questions.length - 1
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-cyan-600 text-white hover:bg-cyan-700'
-                )}
-              >
-                Siguiente
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-        </>
-        )}
-
-        {/* Tab Content: Rendimiento por curso */}
-        {activeTab === 'chart' && (
-        <div className="card p-6 animate-fade-in">
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-cyan-600" />
-              Rendimiento por curso ({chartData.length} cursos)
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Visualiza gráficamente tu desempeño en cada curso para identificar fortalezas y áreas de mejora
-            </p>
-          </div>
-          {/* Barras horizontales; con muchos cursos se adelgaza la barra y se hace scroll */}
-          <div className={clsx('w-full', chartData.length > 14 && 'max-h-[640px] overflow-y-auto pr-1')}>
-          <div style={{ height: Math.max(320, chartData.length * chartRowHeight + 50) }} className="w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chartData}
-                layout="vertical"
-                margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
-                <XAxis
-                  type="number"
-                  domain={[0, 100]}
-                  tickFormatter={(value) => `${value}%`}
-                  stroke="#94A3B8"
-                  fontSize={12}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  stroke="#64748B"
-                  tick={{ fontSize: 11, fill: '#475569' }}
-                  width={170}
-                  interval={0}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  content={({ payload }) => {
-                    if (!payload || payload.length === 0) return null;
-                    const data = payload[0].payload as ChartDataItem;
-                    return (
-                      <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-xl">
-                        <p className="font-bold text-slate-800 mb-1">{data.fullName}</p>
-                        <p className="text-slate-600">
-                          <span className="font-semibold" style={{ color: getColorForPercentage(data.percentage) }}>
-                            {data.percentage.toFixed(1)}%
-                          </span>
-                          {' '}({data.correct} de {data.total} correctas)
-                        </p>
-                      </div>
-                    );
-                  }}
-                />
-                <Bar
-                  dataKey="percentage"
-                  radius={[0, 6, 6, 0]}
-                  barSize={chartBarSize}
-                  background={{ fill: '#F1F5F9' }}
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={getColorForPercentage(entry.percentage)} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          </div>
-
-          {/* Leyenda de colores - Basado en respuestas correctas */}
-          <div className="flex flex-wrap justify-center gap-4 mt-4 pt-4 border-t border-slate-100">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-emerald-500"></div>
-              <span className="text-sm text-slate-600">≥80% Excelente</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-blue-500"></div>
-              <span className="text-sm text-slate-600">≥60% Bueno</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-amber-500"></div>
-              <span className="text-sm text-slate-600">≥50% Regular</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-red-500"></div>
-              <span className="text-sm text-slate-600">&lt;50% Necesita práctica</span>
-            </div>
-          </div>
-        </div>
-        )}
-
-        {/* Tab Content: Detalle por curso */}
-        {activeTab === 'details' && (
-        <div className="card overflow-hidden animate-fade-in">
-          <div className="p-6 border-b border-slate-100">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Table2 className="w-5 h-5 text-cyan-600" />
-              Detalle por curso
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Consulta las respuestas correctas y porcentajes obtenidos en cada curso
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                    Curso
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                    Correctas
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                    Porcentaje
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {result.courseResults.map((course, index) => (
-                  <tr key={index} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 text-sm font-medium text-slate-800">
-                      {course.name}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-center text-slate-600">
-                      {course.correctAnswers} / {course.totalQuestions}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span
-                        className={clsx(
-                          'inline-flex px-2 py-1 text-xs font-semibold rounded-full',
-                          {
-                            'bg-emerald-100 text-emerald-700': course.percentage >= 80,
-                            'bg-blue-100 text-blue-700': course.percentage >= 60 && course.percentage < 80,
-                            'bg-amber-100 text-amber-700': course.percentage >= 50 && course.percentage < 60,
-                            'bg-red-100 text-red-700': course.percentage < 50
-                          }
-                        )}
-                      >
-                        {course.percentage.toFixed(1)}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-cyan-50">
-                <tr>
-                  <td className="px-6 py-4 text-sm font-bold text-cyan-800">
-                    TOTAL
-                  </td>
-                  <td className="px-6 py-4 text-sm text-center font-bold text-cyan-800">
-                    {totalCorrect} / {totalQuestions}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className="inline-flex px-2 py-1 text-xs font-bold rounded-full bg-cyan-200 text-cyan-800">
-                      {result.percentage.toFixed(1)}%
-                    </span>
-                  </td>
-                </tr>
-                {hasWeightedPoints && (
-                  <tr className="bg-cyan-50">
-                    <td colSpan={2} className="px-6 py-4 text-sm font-bold text-cyan-800">
-                      PUNTOS OBTENIDOS
-                    </td>
-                    <td className="px-6 py-4 text-center text-sm font-bold text-cyan-800">
-                      {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)}
-                    </td>
-                  </tr>
-                )}
-                <tr className="bg-cyan-100">
-                  <td colSpan={2} className="px-6 py-4 text-sm font-bold text-cyan-800">
-                    NOTA (0-{scaleMax})
-                    {passing !== null && (
-                      <span className={clsx('ml-2 text-xs', result.passed ? 'text-emerald-700' : 'text-red-700')}>
-                        {result.passed ? 'Aprobado' : 'Desaprobado'}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className="inline-flex px-3 py-1 text-lg font-bold rounded-full bg-cyan-600 text-white">
-                      {formatVigesimalScore(result.vigesimalScore)}
-                    </span>
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-        )}
-
-        {/* Tab Content: Historial de Puntajes */}
-        {activeTab === 'history' && (
-        <div className="card p-6 animate-fade-in">
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <History className="w-5 h-5 text-cyan-600" />
-              Tu Historial de Simulacros {examName}
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Visualiza tu progreso a lo largo del tiempo
-            </p>
-          </div>
-
-          {loadingHistory ? (
-            <div className="text-center py-8">
-              <div className="w-8 h-8 border-4 border-cyan-200 border-t-cyan-600 rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-slate-500">Cargando historial...</p>
-            </div>
-          ) : userHistory && userHistory.history.length > 0 ? (
-            <>
-              {/* Stats del historial */}
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-4 text-center">
-                  <Award className="w-8 h-8 text-cyan-500 mx-auto mb-2" />
-                  <p className="text-2xl font-bold text-cyan-700">{userHistory.totalIntentos}</p>
-                  <p className="text-xs text-cyan-600">Simulacros</p>
-                </div>
-                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 text-center">
-                  <Trophy className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                  <p className="text-2xl font-bold text-emerald-700">{formatVigesimalScore(userHistory.mejorNota)}</p>
-                  <p className="text-xs text-emerald-600">Mejor Nota</p>
-                </div>
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 text-center">
-                  <TrendingUp className="w-8 h-8 text-blue-500 mx-auto mb-2" />
-                  <p className="text-2xl font-bold text-blue-700">
-                    {userHistory.history.length >= 2
-                      ? (userHistory.history[0].notaVigesimal - userHistory.history[1].notaVigesimal > 0 ? '+' : '')
-                        + formatVigesimalScore(userHistory.history[0].notaVigesimal - userHistory.history[1].notaVigesimal)
-                      : '—'}
-                  </p>
-                  <p className="text-xs text-blue-600">vs Anterior</p>
-                </div>
+                <span className="pill num">
+                  {result.percentage.toFixed(1)}% de acierto
+                  {hasWeightedPoints && <> · {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)} pts</>}
+                </span>
               </div>
+            </div>
 
-              {/* Gráfico de progreso */}
-              {userHistory.history.length >= 2 && (
-                <div className="mb-6">
-                  <h3 className="text-sm font-semibold text-slate-600 mb-3">Evolución de tus notas</h3>
-                  <div style={{ height: 250 }} className="w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={[...userHistory.history].reverse().map((h, idx) => ({
-                          intento: `#${idx + 1}`,
-                          nota: h.notaVigesimal,
-                          correctas: h.correctas
-                        }))}
-                        margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis dataKey="intento" stroke="#94A3B8" fontSize={12} />
-                        <YAxis stroke="#94A3B8" fontSize={12} domain={[0, scaleMax]} />
-                        <Tooltip
-                          content={({ payload }) => {
-                            if (!payload || payload.length === 0) return null;
-                            const data = payload[0].payload;
-                            return (
-                              <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-xl">
-                                <p className="font-bold text-slate-800">{data.intento}</p>
-                                <p className="text-cyan-600 font-semibold">{formatVigesimalScore(data.nota)} / {scaleMax}</p>
-                                <p className="text-slate-500 text-sm">{data.correctas} correctas</p>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="nota"
-                          stroke="#0891B2"
-                          strokeWidth={3}
-                          dot={{ fill: '#0891B2', strokeWidth: 2, r: 5 }}
-                          activeDot={{ r: 8, fill: '#0891B2' }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-
-              {/* Tabla de historial */}
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-slate-600">#</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-slate-600">Fecha</th>
-                      <th className="px-4 py-2 text-center text-xs font-semibold text-slate-600">Correctas</th>
-                      <th className="px-4 py-2 text-right text-xs font-semibold text-slate-600">Nota</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {userHistory.history.map((entry, index) => {
-                      const isLatest = index === 0;
-                      const isBest = entry.notaVigesimal === userHistory.mejorNota;
-                      return (
-                        <tr key={index} className={clsx('hover:bg-slate-50', isLatest && 'bg-cyan-50')}>
-                          <td className="px-4 py-3 text-sm text-slate-600">
-                            {userHistory.totalIntentos - index}
-                            {isLatest && <span className="ml-1 text-xs text-cyan-600">(actual)</span>}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-slate-600">
-                            {new Date(entry.fecha).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-center text-slate-600">
-                            {entry.correctas}/{entry.total}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right font-medium">
-                            <span className={clsx(
-                              'inline-flex items-center gap-1',
-                              isBest ? 'text-emerald-600' : 'text-slate-800'
-                            )}>
-                              {isBest && <Trophy className="w-3.5 h-3.5" />}
-                              {formatVigesimalScore(entry.notaVigesimal)}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          ) : (
-            <div className="text-center py-8">
-              <History className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500">Este es tu primer simulacro</p>
-              <p className="text-sm text-slate-400 mt-1">
-                Vuelve a practicar para ver tu progreso aquí
+            <div className="md:max-w-sm md:text-right flex md:flex-col items-center md:items-end gap-3">
+              <img
+                src={mascota(result.percentage >= 70 ? 'celebra' : result.percentage >= 50 ? 'piensa' : 'anima')}
+                alt=""
+                aria-hidden
+                draggable={false}
+                className="w-24 h-24 md:w-28 md:h-28 object-contain shrink-0 motion-safe:animate-pop"
+              />
+              <div>
+              <p className="text-[15px] font-semibold text-ink">{performanceInfo.title}</p>
+              <p className="text-sm text-muted mt-1 leading-relaxed">{performanceInfo.message}</p>
+              <p className="meta mt-3 truncate">
+                {result.student.fullName} · DNI {result.student.dni}
+                {universityName && <> · {universityName}</>}
               </p>
             </div>
+            </div>
+          </div>
+
+          {/* KPIs */}
+          <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-3">
+            {kpis.map(k => (
+              <div key={k.label} className="rounded-xl border border-line bg-white p-4">
+                <SectionLabel>{k.label}</SectionLabel>
+                <p className={clsx('num text-2xl font-semibold mt-2', k.tone)}>{k.value}</p>
+              </div>
+            ))}
+          </div>
+          <p className="meta num mt-3 flex items-center gap-1.5">
+            <Target className="w-3.5 h-3.5" />
+            Promedio {Math.round(averageTimePerQuestion)} s por pregunta
+          </p>
+
+          {/* Tu evolución + fichas */}
+          <div className="mt-6 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="rounded-xl border border-line bg-white p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <SectionLabel>Tu evolución en {examName}</SectionLabel>
+                {userHistory && userHistory.history.length > 0 && (
+                  <span className="meta num">
+                    {userHistory.history.length} {userHistory.history.length === 1 ? 'intento' : 'intentos'} · mejor {formatVigesimalScore(userHistory.mejorNota)}
+                  </span>
+                )}
+              </div>
+              {loadingHistory ? (
+                <p className="mt-3 text-sm text-muted">Cargando tus notas anteriores…</p>
+              ) : userHistory && userHistory.history.length > 1 ? (
+                <Sparkline
+                  className="mt-2"
+                  values={[...userHistory.history]
+                    .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
+                    .slice(-12)
+                    .map(h => h.notaVigesimal)}
+                  max={scaleMax}
+                />
+              ) : (
+                <p className="mt-3 text-sm text-muted">Este es tu primer intento registrado. Vuelve a rendirlo para ver tu curva.</p>
+              )}
+            </div>
+            {(wrongCount + blankCount) > 0 && (
+              <button
+                type="button"
+                onClick={() => setCards(
+                  questions
+                    .filter(q => stateOf(q.id) !== 'correct')
+                    .map(q => toCard(q))
+                )}
+                className="rounded-xl border border-line bg-white p-4 text-left hover:border-jungle-600 transition-colors md:w-64"
+              >
+                <SectionLabel>Fichas de estudio</SectionLabel>
+                <p className="mt-2 text-[15px] font-semibold text-jungle-800">Repasar falladas como fichas</p>
+                <p className="text-sm text-muted num mt-0.5">{wrongCount + blankCount} fichas · gira y califícate</p>
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* Rendimiento por curso (peor → mejor) */}
+        <section className="card p-5 md:p-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-5">
+            <div>
+              <SectionLabel>Rendimiento por curso</SectionLabel>
+              <p className="text-sm text-muted mt-1">
+                {sortedCourses.length} cursos, de menor a mayor acierto
+              </p>
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted">
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-correct" />≥ 70 %</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-warning" />50–69 %</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-wrong" />&lt; 50 %</span>
+            </div>
+          </div>
+
+          <ul className={clsx('space-y-2.5', sortedCourses.length > 14 && 'max-h-[460px] overflow-y-auto pr-2')}>
+            {sortedCourses.map(course => {
+              const tone = barTone(course.percentage);
+              return (
+                <li key={course.name} className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[200px_minmax(0,1fr)_96px] items-center gap-x-4 gap-y-1">
+                  <span className="text-sm font-medium text-ink truncate" title={course.name}>{course.name}</span>
+                  <span className="num text-sm text-muted text-right md:order-3">
+                    <span className={clsx('font-semibold', tone.text)}>{course.percentage.toFixed(0)}%</span>
+                    {' '}· {course.correctAnswers}/{course.totalQuestions}
+                  </span>
+                  <div className="col-span-2 md:col-span-1 md:order-2 h-5 rounded-md bg-paper overflow-hidden">
+                    <div
+                      className={clsx('h-full rounded-md', tone.bar)}
+                      style={{ width: `${Math.max(course.percentage, course.percentage > 0 ? 2 : 0)}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        {/* Pestañas */}
+        <section>
+          <div role="tablist" className="flex gap-6 border-b border-line">
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={activeTab === t.id}
+                onClick={() => setActiveTab(t.id)}
+                className={clsx(
+                  'h-11 -mb-px border-b-2 text-sm font-medium transition-colors',
+                  activeTab === t.id ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Revisión de preguntas */}
+          {activeTab === 'review' && (
+            <div className="pt-6 space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {filters.map(f => (
+                    <button
+                      key={f.id}
+                      onClick={() => {
+                        setReviewFilter(f.id);
+                        setShowReview(false);
+                      }}
+                      className={clsx('chip', reviewFilter === f.id && 'chip-active')}
+                    >
+                      {f.label}
+                      <span className="num font-medium text-muted">{f.count}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-4 text-xs text-muted">
+                  <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-correct" />Correcta</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-wrong" />Incorrecta</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border border-line bg-white" />En blanco</span>
+                </div>
+              </div>
+
+              {filteredIndexes.length === 0 ? (
+                <p className="text-sm text-muted py-6 text-center">No hay preguntas en este filtro.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {questionsByCourse.map((group, gIdx) => {
+                    const visible = group.questions.filter(q => reviewFilter === 'all' || q.state === reviewFilter);
+                    if (visible.length === 0) return null;
+                    const correctCount = group.questions.filter(q => q.state === 'correct').length;
+                    const totalCount = group.questions.length;
+
+                    return (
+                      <div key={gIdx} className="rounded-xl border border-line p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-semibold text-ink truncate flex-1">{group.course}</h4>
+                          <span className="num text-xs font-medium text-muted ml-2">
+                            {correctCount}/{totalCount}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {visible.map(({ index, state }) => (
+                            <button
+                              key={index}
+                              onClick={() => {
+                                setReviewIndex(index);
+                                setShowReview(true);
+                              }}
+                              aria-label={`Pregunta ${index + 1}`}
+                              className={clsx(
+                                'num w-8 h-8 rounded-md text-xs font-semibold transition-colors',
+                                state === 'correct' && 'bg-correct text-white hover:opacity-90',
+                                state === 'wrong' && 'bg-wrong text-white hover:opacity-90',
+                                state === 'blank' && 'bg-white border border-line text-muted hover:bg-paper',
+                                index === reviewIndex && showReview && 'ring-2 ring-jungle-800 ring-offset-1'
+                              )}
+                            >
+                              {index + 1}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Detalle de la pregunta */}
+              {showReview && currentQuestion && (
+                <div className="card p-5 md:p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <div>
+                      <p className="meta">{currentQuestion.subject}</p>
+                      <h3 className="title-screen text-xl mt-0.5 num">
+                        Pregunta {reviewIndex + 1} / {questions.length}
+                      </h3>
+                    </div>
+                    {currentQuestion.sourceFile && (
+                      <span className="text-xs text-subtle">Fuente: {currentQuestion.sourceFile}</span>
+                    )}
+                  </div>
+
+                  <div
+                    className="text-[17px] leading-[1.65] text-ink max-w-[68ch] mb-5"
+                    dangerouslySetInnerHTML={{ __html: currentQuestion.questionText }}
+                  />
+
+                  {currentQuestion.imageLink && (
+                    <div className="mb-5">
+                      <img
+                        src={currentQuestion.imageLink}
+                        alt="Imagen de la pregunta"
+                        className="max-w-full h-auto rounded-xl border border-line"
+                        style={{ maxHeight: '240px' }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="space-y-2 mb-4" role="list">
+                    {currentQuestion.options.map((option, index) => {
+                      const isSelected = currentAnswer?.selectedOption === index;
+                      const isCorrectAnswer = currentQuestion.correctAnswer === index;
+
+                      return (
+                        <div
+                          key={index}
+                          role="listitem"
+                          className={clsx(
+                            'min-h-12 px-4 py-3 rounded-xl border flex items-start gap-3',
+                            isCorrectAnswer
+                              ? 'border-correct bg-correct text-white'
+                              : isSelected
+                                ? 'border-wrong bg-wrong-bg text-ink'
+                                : 'border-line bg-white text-ink opacity-50'
+                          )}
+                        >
+                          <span
+                            className={clsx(
+                              'shrink-0 w-7 h-7 rounded-full grid place-items-center text-sm font-semibold',
+                              isCorrectAnswer
+                                ? 'bg-white text-correct'
+                                : isSelected
+                                  ? 'bg-wrong text-white'
+                                  : 'bg-paper text-muted'
+                            )}
+                          >
+                            {isCorrectAnswer ? (
+                              <CheckCircle className="w-4 h-4" />
+                            ) : isSelected ? (
+                              <XCircle className="w-4 h-4" />
+                            ) : (
+                              indexToLetter(index)
+                            )}
+                          </span>
+                          <span className="flex-1 pt-0.5 text-[15px] font-medium">{option}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div
+                    className={clsx(
+                      'px-4 py-3 rounded-xl flex items-center gap-2 text-sm font-medium',
+                      currentAnswer?.isCorrect
+                        ? 'bg-correct-bg text-correct'
+                        : currentAnswer?.selectedOption == null
+                          ? 'bg-paper text-muted'
+                          : 'bg-wrong-bg text-wrong'
+                    )}
+                  >
+                    {currentAnswer?.isCorrect ? (
+                      <>
+                        <CheckCircle className="w-4 h-4" />
+                        Respuesta correcta (+{formatPoints(currentQuestion.points)} {currentQuestion.points === 1 ? 'punto' : 'puntos'})
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-4 h-4" />
+                        {currentAnswer?.selectedOption == null
+                          ? `Sin responder · la correcta es ${indexToLetter(currentQuestion.correctAnswer)}`
+                          : `Respuesta incorrecta · la correcta es ${indexToLetter(currentQuestion.correctAnswer)}`}
+                      </>
+                    )}
+                  </div>
+
+                  {currentQuestion.justification && (
+                    <div className="mt-4 rounded-xl border border-line bg-paper p-4 md:p-5">
+                      <SectionLabel>Justificación</SectionLabel>
+                      <div
+                        className="mt-2 text-[15px] leading-relaxed text-ink max-w-[68ch]"
+                        dangerouslySetInnerHTML={{ __html: currentQuestion.justification }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 mt-5">
+                    <button
+                      onClick={() => prevIndex !== null && setReviewIndex(prevIndex)}
+                      disabled={prevIndex === null}
+                      className="btn-secondary flex-1"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      Anterior
+                    </button>
+                    <button
+                      onClick={() => nextIndex !== null && setReviewIndex(nextIndex)}
+                      disabled={nextIndex === null}
+                      className="btn-secondary flex-1"
+                    >
+                      Siguiente
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
-        </div>
-        )}
 
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in">
-          <PDFGenerator result={result} />
-          <button
-            onClick={handleRestart}
-            className="btn-secondary"
-          >
-            <RotateCcw className="w-5 h-5" />
-            Nuevo Simulacro
+          {/* Detalle por curso */}
+          {activeTab === 'details' && (
+            <div className="pt-6">
+              <div className="card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-paper">
+                      <tr>
+                        <th className="px-5 py-3 text-left label-section">Curso</th>
+                        <th className="px-5 py-3 text-center label-section">Correctas</th>
+                        <th className="px-5 py-3 text-right label-section">Porcentaje</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {result.courseResults.map((course, index) => (
+                        <tr key={index} className="hover:bg-paper transition-colors">
+                          <td className="px-5 py-3 text-sm font-medium text-ink">{course.name}</td>
+                          <td className="px-5 py-3 text-sm text-center text-muted num">
+                            {course.correctAnswers} / {course.totalQuestions}
+                          </td>
+                          <td className={clsx('px-5 py-3 text-sm text-right font-semibold num', barTone(course.percentage).text)}>
+                            {course.percentage.toFixed(1)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="border-t border-line bg-paper">
+                      <tr>
+                        <td className="px-5 py-3 text-sm font-semibold text-ink">Total</td>
+                        <td className="px-5 py-3 text-sm text-center font-semibold text-ink num">
+                          {totalCorrect} / {totalQuestions}
+                        </td>
+                        <td className="px-5 py-3 text-sm text-right font-semibold text-ink num">
+                          {result.percentage.toFixed(1)}%
+                        </td>
+                      </tr>
+                      {hasWeightedPoints && (
+                        <tr>
+                          <td colSpan={2} className="px-5 py-3 text-sm font-semibold text-ink">Puntos obtenidos</td>
+                          <td className="px-5 py-3 text-sm text-right font-semibold text-ink num">
+                            {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)}
+                          </td>
+                        </tr>
+                      )}
+                      <tr>
+                        <td colSpan={2} className="px-5 py-3 text-sm font-semibold text-ink">
+                          Nota (0–{scaleMax})
+                          {result.passed !== null && passing !== null && (
+                            <span className={clsx('ml-2 text-xs font-semibold', result.passed ? 'text-correct' : 'text-wrong')}>
+                              {result.passed ? 'Aprobado' : 'Desaprobado'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <span className="num text-lg font-bold text-jungle-800">
+                            {formatVigesimalScore(result.vigesimalScore)}
+                          </span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Historial de puntajes */}
+          {activeTab === 'history' && (
+            <div className="pt-6">
+              {loadingHistory ? (
+                <div className="text-center py-10">
+                  <div className="w-7 h-7 border-2 border-line border-t-jungle-800 rounded-full animate-spin mx-auto mb-3" />
+                  <p className="text-sm text-muted">Cargando historial…</p>
+                </div>
+              ) : userHistory && userHistory.history.length > 0 ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-line p-4">
+                      <SectionLabel>Simulacros</SectionLabel>
+                      <p className="num text-2xl font-semibold text-ink mt-2">{userHistory.totalIntentos}</p>
+                    </div>
+                    <div className="rounded-xl border border-line p-4">
+                      <SectionLabel>Mejor nota</SectionLabel>
+                      <p className="num text-2xl font-semibold text-ink mt-2">{formatVigesimalScore(userHistory.mejorNota)}</p>
+                    </div>
+                    <div className="rounded-xl border border-line p-4">
+                      <SectionLabel>Vs. anterior</SectionLabel>
+                      <p className="num text-2xl font-semibold text-ink mt-2">
+                        {userHistory.history.length >= 2
+                          ? (userHistory.history[0].notaVigesimal - userHistory.history[1].notaVigesimal > 0 ? '+' : '')
+                            + formatVigesimalScore(userHistory.history[0].notaVigesimal - userHistory.history[1].notaVigesimal)
+                          : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {userHistory.history.length >= 2 && (
+                    <div className="card p-5">
+                      <SectionLabel className="mb-3">Evolución de tus notas</SectionLabel>
+                      <div style={{ height: 240 }} className="w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={[...userHistory.history].reverse().map((h, idx) => ({
+                              intento: `#${idx + 1}`,
+                              nota: h.notaVigesimal,
+                              correctas: h.correctas
+                            }))}
+                            margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+                          >
+                            <CartesianGrid stroke="#E2E8E6" vertical={false} />
+                            <XAxis dataKey="intento" stroke="#8A9A96" fontSize={12} tickLine={false} axisLine={{ stroke: '#E2E8E6' }} />
+                            <YAxis stroke="#8A9A96" fontSize={12} domain={[0, scaleMax]} tickLine={false} axisLine={false} width={32} />
+                            <Tooltip
+                              cursor={{ stroke: '#E2E8E6' }}
+                              content={({ payload }) => {
+                                if (!payload || payload.length === 0) return null;
+                                const data = payload[0].payload;
+                                return (
+                                  <div className="bg-white border border-line rounded-xl px-3 py-2 shadow-card">
+                                    <p className="text-xs text-muted">{data.intento}</p>
+                                    <p className="num font-semibold text-ink">{formatVigesimalScore(data.nota)} / {scaleMax}</p>
+                                    <p className="num text-xs text-muted">{data.correctas} correctas</p>
+                                  </div>
+                                );
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="nota"
+                              stroke="#10312D"
+                              strokeWidth={2}
+                              dot={{ fill: '#10312D', strokeWidth: 0, r: 4 }}
+                              activeDot={{ r: 6, fill: '#1F5B52' }}
+                              isAnimationActive={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="card overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-paper">
+                          <tr>
+                            <th className="px-4 py-2.5 text-left label-section">#</th>
+                            <th className="px-4 py-2.5 text-left label-section">Fecha</th>
+                            <th className="px-4 py-2.5 text-center label-section">Correctas</th>
+                            <th className="px-4 py-2.5 text-right label-section">Nota</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-line">
+                          {userHistory.history.map((entry, index) => {
+                            const isLatest = index === 0;
+                            const isBest = entry.notaVigesimal === userHistory.mejorNota;
+                            return (
+                              <tr key={index} className={clsx(isLatest && 'bg-jungle-50')}>
+                                <td className="px-4 py-3 text-sm text-muted num">
+                                  {userHistory.totalIntentos - index}
+                                  {isLatest && <span className="ml-1 text-xs text-jungle-600">(actual)</span>}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-muted">
+                                  {new Date(entry.fecha).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-center text-muted num">
+                                  {entry.correctas}/{entry.total}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-right font-semibold num">
+                                  <span className="inline-flex items-center gap-1 text-ink">
+                                    {isBest && <Trophy className="w-3.5 h-3.5 text-jungle-600" aria-label="Mejor nota" />}
+                                    {formatVigesimalScore(entry.notaVigesimal)}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-10">
+                  <History className="w-10 h-10 text-subtle mx-auto mb-3" />
+                  <p className="text-ink font-medium">Este es tu primer simulacro</p>
+                  <p className="text-sm text-muted mt-1">Vuelve a practicar para ver tu progreso aquí</p>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Acciones: un solo primario (Descargar PDF) */}
+        <section className="flex flex-col sm:flex-row gap-3 sm:justify-center border-t border-line pt-8">
+          {/* PDFGenerator trae su propio color; se fuerza el primario de la marca */}
+          <span className="contents [&_button]:!bg-jungle-800 [&_button:hover]:!bg-jungle-600">
+            <PDFGenerator result={result} />
+          </span>
+          <button onClick={() => navigate('/banqueo')} className="btn-secondary">
+            <Target className="w-4 h-4" />
+            Practicar mis cursos débiles
           </button>
-        </div>
+          <button onClick={handleRestart} className="btn-secondary">
+            <RotateCcw className="w-4 h-4" />
+            Nuevo simulacro
+          </button>
+        </section>
 
-        <p className="text-center text-slate-400 text-sm flex items-center justify-center gap-2">
-          <Stethoscope className="w-4 h-4" />
-          {SITE_NAME} - Simulacro {examName}
-        </p>
-      </div>
+        <p className="text-center meta">{SITE_NAME} · Simulacro {examName}</p>
+      </main>
+
+      <TerminalFooter />
     </div>
   );
 }

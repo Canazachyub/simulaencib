@@ -510,6 +510,12 @@ export async function checkBanqueoAccess(dni: string, email: string): Promise<Ba
  * Obtiene 10 preguntas aleatorias de un curso específico para el Banqueo
  */
 export async function getBanqueoQuestions(courseName: string, examId: string = DEFAULT_EXAM_ID): Promise<BanqueoQuestionsResult> {
+  if (USE_MOCK) {
+    await mockDelay(500);
+    const bank = mockBank(examParam(examId), courseName);
+    const questions = [...bank].sort(() => Math.random() - 0.5).slice(0, 10);
+    return { exam: examParam(examId), course: courseName, totalQuestions: questions.length, stock: bank.length, questions };
+  }
   try {
     const params = new URLSearchParams({
       action: 'getBanqueoQuestions',
@@ -539,6 +545,173 @@ export async function getBanqueoQuestions(courseName: string, examId: string = D
         : 'No se pudo cargar las preguntas. Por favor, intenta de nuevo.'
     );
   }
+}
+
+// ============================================
+// BANQUEO v2 — "Arma tu banqueo"
+// ============================================
+
+export interface BanqueoCatalogCourse {
+  name: string;
+  total: number;
+  temas: { tema: string; total: number; subtemas: { subtema: string; total: number }[] }[];
+  fuentes: { fuente: string; total: number }[];
+}
+
+export interface BanqueoCatalog {
+  exam: string;
+  courses: BanqueoCatalogCourse[];
+}
+
+export interface BanqueoIdItem {
+  id: string;
+  tema: string;
+  subtema: string;
+  fuente: string;
+}
+
+export const BANQUEO_LOTE = 30;
+
+/** Error que indica que el Apps Script desplegado aún no tiene las acciones nuevas. */
+export class BackendViejoError extends Error {
+  constructor() {
+    super('Actualiza el servidor para filtros y progreso');
+    this.name = 'BackendViejoError';
+  }
+}
+
+function esAccionNoValida(msg: unknown): boolean {
+  return /acci[oó]n no v[aá]lida/i.test(String(msg || ''));
+}
+
+async function callBanqueo<T>(params: Record<string, string>, timeout = 30000): Promise<T> {
+  const url = `${API_BASE_URL}?${new URLSearchParams(params).toString()}`;
+  const response = await fetchWithTimeout(url, timeout);
+  if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+  const result = await response.json();
+  if (!result.success) {
+    if (esAccionNoValida(result.error)) throw new BackendViejoError();
+    throw new Error(result.error || 'Error del servidor');
+  }
+  const data = result.data as T & { error?: string };
+  if (data && typeof data === 'object' && data.error) throw new Error(data.error);
+  return data;
+}
+
+const catalogCache = new Map<string, Promise<BanqueoCatalog>>();
+const idsCache = new Map<string, Promise<BanqueoIdItem[]>>();
+
+/** Catálogo de cursos/temas/fuentes con totales. Lanza BackendViejoError si el servidor es el viejo. */
+export function getBanqueoCatalog(examId: string = DEFAULT_EXAM_ID): Promise<BanqueoCatalog> {
+  const exam = examParam(examId);
+  let p = catalogCache.get(exam);
+  if (!p) {
+    p = USE_MOCK
+      ? mockDelay(400).then(() => mockBanqueoCatalog(exam))
+      : callBanqueo<BanqueoCatalog>({ action: 'banqueoCatalog', exam }, 60000);
+    p.catch(() => catalogCache.delete(exam));
+    catalogCache.set(exam, p);
+  }
+  return p;
+}
+
+/** Todas las preguntas (ligeras) de un curso; los filtros finos se aplican en el cliente. */
+export function getBanqueoIds(examId: string, course: string): Promise<BanqueoIdItem[]> {
+  const exam = examParam(examId);
+  const key = `${exam}|${course}`;
+  let p = idsCache.get(key);
+  if (!p) {
+    p = USE_MOCK
+      ? mockDelay(300).then(() => mockBank(exam, course).map(q => ({ id: q.id, tema: q.metadata.tema, subtema: q.metadata.subtema, fuente: q.sourceFile || 'Sin fuente' })))
+      : callBanqueo<{ items: BanqueoIdItem[] }>({ action: 'banqueoIds', exam, course }, 60000).then(d => d.items || []);
+    p.catch(() => idsCache.delete(key));
+    idsCache.set(key, p);
+  }
+  return p;
+}
+
+/** Preguntas completas en el orden pedido (máx. 30 por llamada; si hay más, se trocea). */
+export async function getBanqueoPorIds(examId: string, course: string, ids: string[]): Promise<BanqueoQuestion[]> {
+  const exam = examParam(examId);
+  const out: BanqueoQuestion[] = [];
+  for (let i = 0; i < ids.length; i += BANQUEO_LOTE) {
+    const chunk = ids.slice(i, i + BANQUEO_LOTE);
+    if (USE_MOCK) {
+      await mockDelay(500);
+      const bank = new Map(mockBank(exam, course).map(q => [q.id, q]));
+      chunk.forEach(id => { const q = bank.get(id); if (q) out.push(q); });
+    } else {
+      const data = await callBanqueo<{ questions: BanqueoQuestion[] }>({ action: 'banqueoPorIds', exam, course, ids: chunk.join(',') });
+      out.push(...(data.questions || []));
+    }
+  }
+  return out;
+}
+
+// ----- Mocks del banqueo v2 (VITE_USE_MOCK) -----
+function mockDelay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const MOCK_FUENTES = ['ENAM 2023', 'ENAM 2021', 'ENAM 2019', 'RM 2019', 'ENCIB 2024', 'EsSalud 2022'];
+const mockBankCache = new Map<string, BanqueoQuestion[]>();
+
+function mockBank(exam: string, course: string): BanqueoQuestion[] {
+  const key = `${exam}|${course}`;
+  const hit = mockBankCache.get(key);
+  if (hit) return hit;
+  const topics = MOCK_TOPICS[course] || ['Tema general', 'Casos clínicos', 'Conceptos básicos'];
+  const size = 40 + (course.length % 5) * 8;
+  const slug = course.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '').slice(0, 6).toLowerCase();
+  const bank: BanqueoQuestion[] = Array.from({ length: size }, (_, i) => {
+    const tema = topics[i % topics.length];
+    const subtema = `${tema} — ${i % 3 === 0 ? 'clínica' : i % 3 === 1 ? 'fisiopatología' : 'diagnóstico'}`;
+    const options = generateMockOptions(course).slice(0, 4);
+    return {
+      id: `m${slug}${String(i + 1).padStart(3, '0')}`,
+      number: i + 1,
+      questionText: generateMockQuestionText(course, tema, i % 2 === 0 ? 'Caso Clínico' : 'Problema', i + 1),
+      questionType: i % 2 === 0 ? 'Caso Clínico' : 'Problema',
+      options,
+      correctAnswer: (i * 7) % options.length,
+      imageLink: null,
+      subject: course,
+      sourceFile: MOCK_FUENTES[(i * 5) % MOCK_FUENTES.length],
+      justification: `<p>Justificación de ejemplo para la pregunta ${i + 1} de <b>${tema}</b>.</p>`,
+      points: 1,
+      metadata: { numero: i + 1, curso: course, tema, subtema }
+    };
+  });
+  mockBankCache.set(key, bank);
+  return bank;
+}
+
+function mockBanqueoCatalog(exam: string): BanqueoCatalog {
+  return {
+    exam,
+    courses: MOCK_CONFIG.courses.map(c => {
+      const bank = mockBank(exam, c.name);
+      const temas = new Map<string, Map<string, number>>();
+      const fuentes = new Map<string, number>();
+      bank.forEach(q => {
+        const t = temas.get(q.metadata.tema) || new Map<string, number>();
+        t.set(q.metadata.subtema, (t.get(q.metadata.subtema) || 0) + 1);
+        temas.set(q.metadata.tema, t);
+        const f = q.sourceFile || 'Sin fuente';
+        fuentes.set(f, (fuentes.get(f) || 0) + 1);
+      });
+      return {
+        name: c.name,
+        total: bank.length,
+        temas: [...temas].map(([tema, subs]) => ({
+          tema,
+          total: [...subs.values()].reduce((a, b) => a + b, 0),
+          subtemas: [...subs].map(([subtema, total]) => ({ subtema, total }))
+        })),
+        fuentes: [...fuentes].map(([fuente, total]) => ({ fuente, total }))
+      };
+    })
+  };
 }
 
 // Cursos de ENCIB para el banqueo (respaldo; los cursos salen de la config de cada examen)

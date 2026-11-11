@@ -9,7 +9,7 @@ import type {
   Answer,
   ExamResult
 } from '../types';
-import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_META } from '../types';
+import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_META, UPCOMING_EXAMS } from '../types';
 import { getConfig, getQuestions, getExams } from '../services/api';
 import { calculateExamResult } from '../utils/calculations';
 
@@ -77,7 +77,7 @@ let examsPromise: Promise<void> | null = null;
 
 export const useExamStore = create<ExamStore>((set, get) => ({
   // Catálogo de exámenes (hasta saber qué soporta el backend, solo ENCIB)
-  exams: [ENCIB_FALLBACK_META],
+  exams: [ENCIB_FALLBACK_META, ...UPCOMING_EXAMS],
   examsLoaded: false,
   multiExam: false,
   selectedExamId: initialExamId(),
