@@ -3,7 +3,7 @@ import {
   Brain, BookOpen, ChevronRight, Check, X, Target,
   Clock, Repeat, Lightbulb, Lock, MousePointerClick, ListChecks, Filter
 } from 'lucide-react';
-import { TopBar, TerminalFooter, Accordion, AccordionItem } from './terminal';
+import { TopBar, TerminalFooter, Accordion, AccordionItem, SINAPSIS_URL } from './terminal';
 
 export function BanqueoLanding() {
   const navigate = useNavigate();
@@ -168,6 +168,11 @@ export function BanqueoLanding() {
             <Accordion>
               <AccordionItem title="¿Quién puede acceder?">
                 Los alumnos inscritos: entra con tu DNI y el correo con el que te inscribiste.
+                ¿Aún no tienes acceso?{' '}
+                <a href={SINAPSIS_URL} className="font-semibold text-jungle-600 underline underline-offset-2 hover:text-jungle-800">
+                  Elige tu plataforma en sinapsisedu.com
+                </a>
+                .
               </AccordionItem>
               <AccordionItem title="¿Cómo se califica?">
                 Al confirmar una alternativa queda fija y ves al instante si acertaste y la justificación.

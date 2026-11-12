@@ -56,7 +56,7 @@ export function TopBar({ right, children, sticky = true }: TopBarProps) {
           {right ?? (
             <>
               <a href={SINAPSIS_URL} className="btn-ghost hidden md:inline-flex">
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-4 h-4" aria-hidden />
                 Volver a SINAPSIS
               </a>
               <a
@@ -65,7 +65,7 @@ export function TopBar({ right, children, sticky = true }: TopBarProps) {
                 aria-label="Volver a sinapsisedu.com"
                 title="Volver a sinapsisedu.com"
               >
-                <Home className="w-5 h-5" />
+                <Home className="w-5 h-5" aria-hidden />
               </a>
               <a href={PORTAL_URL} className="btn-secondary min-h-[44px] py-2 px-3 sm:px-4 text-sm">
                 <KeyRound className="w-4 h-4" />
@@ -95,16 +95,21 @@ export function TerminalFooter() {
             Simulacros y banqueo para ENCIB, ENAM, Residentado Médico, SERUMS y EsSalud.
           </p>
         </div>
-        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-          <a href={SINAPSIS_URL} className="transition-colors hover:text-lime-400">sinapsisedu.com</a>
-          <a href={PORTAL_URL} className="transition-colors hover:text-lime-400">Mis accesos</a>
-          <Link to="/banqueo" className="transition-colors hover:text-lime-400">Banqueo</Link>
+        <div className="flex flex-wrap gap-x-6 text-sm">
+          <a href={SINAPSIS_URL} className="inline-flex min-h-[44px] items-center transition-colors hover:text-lime-400">sinapsisedu.com</a>
+          <a href={PORTAL_URL} className="inline-flex min-h-[44px] items-center transition-colors hover:text-lime-400">Mis accesos</a>
+          <Link to="/banqueo" className="inline-flex min-h-[44px] items-center transition-colors hover:text-lime-400">Banqueo</Link>
         </div>
       </div>
       <div className="border-t border-white/10">
         <div className="max-w-terminal mx-auto px-4 lg:px-8 flex flex-wrap justify-between gap-2 py-5 text-xs text-white/45">
-          <span>© {new Date().getFullYear()} SINAPSIS EDU · sinapsisedu.com</span>
-          <span>Material de práctica: no reemplaza ni representa a los exámenes oficiales.</span>
+          <nav aria-label="Legal" className="flex flex-wrap gap-x-4">
+            <a href={`${SINAPSIS_URL}#/terminos`} className="inline-flex min-h-[44px] items-center transition-colors hover:text-lime-400">Términos</a>
+            <a href={`${SINAPSIS_URL}#/privacidad`} className="inline-flex min-h-[44px] items-center transition-colors hover:text-lime-400">Privacidad</a>
+            <a href={`${SINAPSIS_URL}#/libro-de-reclamaciones`} className="inline-flex min-h-[44px] items-center transition-colors hover:text-lime-400">Libro de Reclamaciones</a>
+          </nav>
+          <span className="self-center">© {new Date().getFullYear()} SINAPSIS EDU · sinapsisedu.com</span>
+          <span className="self-center">Material de práctica: no reemplaza ni representa a los exámenes oficiales.</span>
         </div>
       </div>
     </footer>
