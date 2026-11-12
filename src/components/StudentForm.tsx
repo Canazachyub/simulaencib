@@ -398,7 +398,7 @@ export function StudentForm() {
                         Para acceder a más simulacros de {exam.nombre}, inscríbete por WhatsApp:
                       </p>
                       <a
-                        href="https://wa.link/h2darz"
+                        href="https://wa.me/51989855026?text=Hola%2C%20quiero%20m%C3%A1s%20simulacros%20de%20SINAPSIS."
                         target="_blank"
                         rel="noopener noreferrer"
                         className="btn-secondary py-2 text-sm"
@@ -420,7 +420,7 @@ export function StudentForm() {
               <strong className="text-jungle-800">Tu primer simulacro de {exam.nombre} es gratis.</strong> Para más
               intentos, solicita tu inscripción por WhatsApp:{' '}
               <a
-                href="https://wa.link/h2darz"
+                href="https://wa.me/51989855026?text=Hola%2C%20quiero%20m%C3%A1s%20simulacros%20de%20SINAPSIS."
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-jungle-600 hover:text-jungle-800 font-semibold underline underline-offset-2"

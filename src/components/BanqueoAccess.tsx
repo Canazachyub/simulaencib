@@ -66,7 +66,7 @@ export function BanqueoAccess() {
                   Disponible para alumnos con inscripción confirmada.
                 </p>
                 <a
-                  href="https://wa.link/h2darz"
+                  href="https://wa.me/51989855026?text=Hola%2C%20quiero%20inscribirme%20al%20Banqueo%20de%20SINAPSIS."
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-1 inline-flex items-center gap-1.5 min-h-[44px] text-sm font-semibold text-jungle-600 hover:text-jungle-800"
@@ -126,7 +126,7 @@ export function BanqueoAccess() {
                     <p className="text-sm font-semibold text-ink">{error}</p>
                     <p className="text-xs text-muted mt-1">Para acceder al Banqueo Histórico, solicita tu acceso:</p>
                     <a
-                      href="https://wa.link/h2darz"
+                      href="https://wa.me/51989855026?text=Hola%2C%20quiero%20inscribirme%20al%20Banqueo%20de%20SINAPSIS."
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-1 inline-flex items-center gap-1.5 min-h-[44px] text-sm font-semibold text-jungle-600 hover:text-jungle-800"

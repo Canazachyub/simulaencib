@@ -654,7 +654,7 @@ export function Quiz() {
 
           <p className="mt-6 text-center">
             <a
-              href="https://wa.link/40zqta"
+              href="https://wa.me/51989855026?text=Hola%2C%20quiero%20reportar%20un%20error%20en%20una%20pregunta%20del%20banqueo."
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-[color:var(--q-muted)] hover:underline underline-offset-2"
