@@ -115,7 +115,7 @@ export function Landing() {
   const maxCourseQuestions = Math.max(1, ...courses.map(c => c.questions));
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="min-h-screen flex flex-col bg-white pb-[76px] lg:pb-0">
       <TopBar>
         {exams.length > 1 && (
           <ExamSelector exams={exams} selectedId={exam.id} onSelect={handleSelectExam} />
@@ -146,10 +146,8 @@ export function Landing() {
             <p className="mt-5 text-[17px] leading-[1.65] text-muted max-w-[68ch]">
               {isEncib ? (
                 <>
-                  El <strong className="text-ink">Examen Nacional de Ciencias Básicas (ENCIB)</strong> es una prueba
-                  planificada, organizada, conducida y validada por la <strong className="text-ink">Asociación Peruana de
-                  Facultades de Medicina (ASPEFAM)</strong>, dirigida a los estudiantes de medicina que culminan cursos de
-                  Ciencias Básicas.
+                  El <strong className="text-ink">Examen Nacional de Ciencias Básicas</strong> de ASPEFAM, para
+                  estudiantes que culminan Ciencias Básicas. Practica con el mismo formato, tiempo y escala.
                 </>
               ) : (
                 <>
@@ -327,6 +325,25 @@ export function Landing() {
       </main>
 
       <TerminalFooter />
+
+      {/* Barra de acción fija en móvil (DESIGN 2.2): el primario siempre a un toque */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-white/95 backdrop-blur px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="max-w-xl mx-auto flex items-center gap-2">
+          <button
+            onClick={() => navigate('/banqueo')}
+            className="btn-secondary shrink-0 px-4"
+            aria-label="Banqueo histórico"
+            title="Banqueo histórico"
+          >
+            <Library className="w-5 h-5" />
+            <span className="hidden min-[400px]:inline">Banqueo</span>
+          </button>
+          <button onClick={startSimulacro} className="btn-primary flex-1 min-w-0">
+            <span className="truncate">Comenzar simulacro</span>
+            <ChevronRight className="w-5 h-5 shrink-0" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

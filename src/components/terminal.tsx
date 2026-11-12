@@ -4,7 +4,7 @@
  */
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, KeyRound } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Home, KeyRound } from 'lucide-react';
 import clsx from 'clsx';
 
 // ============================================
@@ -59,7 +59,15 @@ export function TopBar({ right, children, sticky = true }: TopBarProps) {
                 <ArrowLeft className="w-4 h-4" />
                 Volver a SINAPSIS
               </a>
-              <a href={PORTAL_URL} className="btn-secondary min-h-[40px] py-2 px-4 text-sm">
+              <a
+                href={SINAPSIS_URL}
+                className="md:hidden grid place-items-center w-11 h-11 rounded-xl text-muted hover:text-jungle-800 hover:bg-paper transition-colors"
+                aria-label="Volver a sinapsisedu.com"
+                title="Volver a sinapsisedu.com"
+              >
+                <Home className="w-5 h-5" />
+              </a>
+              <a href={PORTAL_URL} className="btn-secondary min-h-[44px] py-2 px-3 sm:px-4 text-sm">
                 <KeyRound className="w-4 h-4" />
                 Mis accesos
               </a>
@@ -269,5 +277,39 @@ export function TimerRing({ remaining, total, label, size = 'md' }: TimerRingPro
       </span>
       <span className="sr-only" aria-live="polite">{milestone}</span>
     </div>
+  );
+}
+
+// ============================================
+// Pasos del simulacro (Datos → Confirmar → Examen): progreso visual del flujo
+// ============================================
+export function FlowSteps({ current }: { current: 1 | 2 | 3 }) {
+  const steps = ['Tus datos', 'Confirmar', 'Examen'];
+  return (
+    <ol className="flex items-center gap-2" aria-label={`Paso ${current} de ${steps.length}`}>
+      {steps.map((label, i) => {
+        const n = i + 1;
+        const done = n < current;
+        const active = n === current;
+        return (
+          <li key={label} className="flex-1 min-w-0" aria-current={active ? 'step' : undefined}>
+            <span
+              className={clsx(
+                'block h-1.5 rounded-full',
+                done ? 'bg-jungle-600' : active ? 'bg-jungle-800' : 'bg-line'
+              )}
+            />
+            <span
+              className={clsx(
+                'mt-1.5 flex items-center gap-1 text-[12px] font-semibold truncate',
+                active ? 'text-jungle-800' : done ? 'text-jungle-600' : 'text-subtle'
+              )}
+            >
+              <span className="num">{n}.</span> {label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

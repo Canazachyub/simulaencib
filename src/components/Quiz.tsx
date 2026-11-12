@@ -667,7 +667,7 @@ export function Quiz() {
 
       {/* ===== Barra inferior ===== */}
       <nav className="fixed bottom-0 inset-x-0 z-30 border-t bg-[var(--q-surface)] border-[color:var(--q-line)]">
-        <div className="max-w-[1120px] mx-auto px-2 sm:px-5 py-3 flex items-center gap-2">
+        <div className="max-w-[1120px] mx-auto px-2 sm:px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center gap-2">
           <button
             type="button"
             onClick={handlePrevious}
@@ -709,7 +709,7 @@ export function Quiz() {
           </button>
 
           <button type="button" onClick={goNextOrReview} className="qz-btn-primary shrink-0 px-4 sm:px-6">
-            {isLastQuestion ? 'Revisar' : 'Próximo'}
+            {isLastQuestion ? 'Revisar' : 'Siguiente'}
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>

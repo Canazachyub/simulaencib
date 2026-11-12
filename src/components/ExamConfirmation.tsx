@@ -7,7 +7,7 @@ import {
 import { useExamStore, useSelectedExam } from '../hooks/useExam';
 import { ALL_UNIVERSITIES, ENCIB_FALLBACK_CONFIG } from '../types';
 import { formatDuration, formatDurationShort } from '../utils/calculations';
-import { TopBar, SectionLabel, Accordion, AccordionItem, GradingStepper } from './terminal';
+import { TopBar, SectionLabel, Accordion, AccordionItem, GradingStepper, FlowSteps } from './terminal';
 
 export function ExamConfirmation() {
   const navigate = useNavigate();
@@ -55,7 +55,7 @@ export function ExamConfirmation() {
     `Tienes ${formatDuration(durationMinutes).toUpperCase()} para completar el examen (igual que el ${exam.nombre} oficial)`,
     'Cuando el tiempo termine, el examen se cierra y muestra tus resultados',
     'Puedes navegar libremente entre las preguntas (avanzar y retroceder)',
-    'No sabrás si tu respuesta es correcta hasta que envíes la prueba (botón "Revisar" → "Enviar la prueba")',
+    'Verás qué acertaste recién al enviar la prueba ("Revisar" → "Enviar la prueba"), como en el examen real',
     `Al finalizar, obtendrás tu nota (0-${scaleMax})${passing !== null ? `; se aprueba con ${passing}` : ''} y podrás descargar un PDF`
   ];
 
@@ -120,6 +120,10 @@ export function ExamConfirmation() {
             </p>
             <h1 className="title-screen text-[26px] md:text-[28px] leading-tight mt-1">Confirmar examen</h1>
           </div>
+        </div>
+
+        <div className="mb-6">
+          <FlowSteps current={2} />
         </div>
 
         <div className="card">
@@ -193,14 +197,15 @@ export function ExamConfirmation() {
           </section>
 
           {/* Acciones */}
-          <div className="p-6 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
+          <div className="sticky bottom-0 z-10 bg-white rounded-b-2xl border-t border-line p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] flex flex-row justify-between gap-3">
             <button onClick={() => navigate('/registro')} className="btn-secondary">
               <ChevronLeft className="w-5 h-5" />
-              Modificar datos
+              <span className="hidden sm:inline">Modificar datos</span>
+              <span className="sm:hidden">Datos</span>
             </button>
-            <button onClick={handleStartExam} disabled={!examConfig} className="btn-primary">
-              <PlayCircle className="w-5 h-5" />
-              Comenzar
+            <button onClick={handleStartExam} disabled={!examConfig} className="btn-primary flex-1 sm:flex-none">
+              {examConfig ? <PlayCircle className="w-5 h-5" /> : <Loader2 className="w-5 h-5 animate-spin" />}
+              {examConfig ? <>Empezar · <span className="num">{formatDurationShort(durationMinutes)}</span></> : 'Cargando…'}
             </button>
           </div>
         </div>

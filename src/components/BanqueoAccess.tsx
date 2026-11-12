@@ -56,25 +56,27 @@ export function BanqueoAccess() {
             <h1 className="title-screen text-[28px] mt-1">Ingresa al banqueo</h1>
             <p className="text-sm text-muted mt-2">Usa tu DNI y el correo con el que te inscribiste.</p>
 
-            {/* Info */}
+            {/* Info (se oculta si ya hay un error con el mismo enlace) */}
+            {!error && (
             <div className="mt-6 rounded-control border border-line bg-paper p-4 flex items-start gap-3">
               <Lock className="w-4 h-4 text-jungle-800 shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-ink">Exclusivo para usuarios inscritos</p>
                 <p className="text-xs text-muted mt-1">
-                  El Banqueo Histórico está disponible solo para usuarios que han confirmado su inscripción.
+                  Disponible para alumnos con inscripción confirmada.
                 </p>
                 <a
                   href="https://wa.link/h2darz"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-jungle-600 hover:text-jungle-800"
+                  className="mt-1 inline-flex items-center gap-1.5 min-h-[44px] text-sm font-semibold text-jungle-600 hover:text-jungle-800"
                 >
                   <MessageCircle className="w-4 h-4" />
                   Inscríbete por WhatsApp
                 </a>
               </div>
             </div>
+            )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
               <div>
@@ -85,6 +87,7 @@ export function BanqueoAccess() {
                     type="text"
                     id="dni"
                     inputMode="numeric"
+                    autoComplete="off"
                     value={dni}
                     onChange={(e) => setDni(e.target.value.replace(/\D/g, '').slice(0, 8))}
                     className="input pl-11 num"
@@ -104,6 +107,7 @@ export function BanqueoAccess() {
                   <input
                     type="email"
                     id="email"
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="input pl-11"
@@ -125,7 +129,7 @@ export function BanqueoAccess() {
                       href="https://wa.link/h2darz"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-jungle-600 hover:text-jungle-800"
+                      className="mt-1 inline-flex items-center gap-1.5 min-h-[44px] text-sm font-semibold text-jungle-600 hover:text-jungle-800"
                     >
                       <MessageCircle className="w-4 h-4" />
                       Solicitar acceso por WhatsApp
@@ -141,7 +145,7 @@ export function BanqueoAccess() {
                     Verificando...
                   </>
                 ) : (
-                  'Verificar acceso'
+                  'Entrar'
                 )}
               </button>
             </form>
@@ -150,7 +154,7 @@ export function BanqueoAccess() {
               <p className="text-xs text-muted">¿No tienes acceso? El simulacro gratuito sigue disponible.</p>
               <button
                 onClick={() => navigate('/registro')}
-                className="mt-1 text-sm font-semibold text-jungle-600 hover:text-jungle-800"
+                className="mt-1 min-h-[44px] px-3 text-sm font-semibold text-jungle-600 hover:text-jungle-800"
               >
                 Ir al simulacro gratuito
               </button>

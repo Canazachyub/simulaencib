@@ -6,7 +6,7 @@ import { validateDNI, validateName } from '../utils/calculations';
 import { registerUser, checkAccess, AccessCheckResult } from '../services/api';
 import { UNIVERSITIES_BY_REGION } from '../types';
 import { ExamSelector } from './ExamSelector';
-import { TopBar } from './terminal';
+import { TopBar, FlowSteps } from './terminal';
 
 export function StudentForm() {
   const navigate = useNavigate();
@@ -202,14 +202,25 @@ export function StudentForm() {
             <Stethoscope className="w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <p className="meta">{exam.nombre} · Simulacro · Paso 1 de 2</p>
+            <p className="meta">{exam.nombre} · Simulacro</p>
             <h1 className="title-screen text-[26px] md:text-[28px] leading-tight mt-1">Tus datos</h1>
           </div>
         </div>
 
-        <div className="card p-6 md:p-8">
+        <div className="mb-6">
+          <FlowSteps current={1} />
+        </div>
+
+        <form
+          className="card p-6 md:p-8"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!isSubmitting && !isCheckingAccess && !blocked) handleSubmit();
+          }}
+        >
           <p className="text-[15px] text-muted mb-6">
-            Ingresa tus datos para comenzar el simulacro {exam.nombre}. Los campos con * son obligatorios.
+            Solo para identificar tu resultado. No necesitas crear cuenta ni contraseña.
           </p>
 
           <div className="space-y-5">
@@ -270,6 +281,7 @@ export function StudentForm() {
               </label>
               <input
                 id="sf-name"
+                autoComplete="name"
                 type="text"
                 value={fullName}
                 onChange={(e) => {
@@ -321,6 +333,7 @@ export function StudentForm() {
                 </label>
                 <input
                   id="sf-email"
+                  autoComplete="email"
                   type="email"
                   value={email}
                   onChange={(e) => {
@@ -341,6 +354,7 @@ export function StudentForm() {
                 </label>
                 <input
                   id="sf-phone"
+                  autoComplete="tel-national"
                   type="tel"
                   inputMode="numeric"
                   value={phone}
@@ -387,7 +401,7 @@ export function StudentForm() {
                         href="https://wa.link/h2darz"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="btn-secondary min-h-[40px] py-2 text-sm"
+                        className="btn-secondary py-2 text-sm"
                       >
                         <MessageCircle className="w-4 h-4" />
                         Solicitar acceso por WhatsApp
@@ -399,7 +413,8 @@ export function StudentForm() {
             </div>
           )}
 
-          {/* Info */}
+          {/* Info (no se repite si ya se muestra el aviso de acceso restringido) */}
+          {!blocked && (
           <div className="mt-6 p-4 rounded-control bg-jungle-50 border border-jungle-100">
             <p className="text-sm text-muted">
               <strong className="text-jungle-800">Tu primer simulacro de {exam.nombre} es gratis.</strong> Para más
@@ -414,14 +429,15 @@ export function StudentForm() {
               </a>
             </p>
           </div>
+          )}
 
           <div className="flex flex-col-reverse sm:flex-row sm:justify-between gap-3 mt-8">
-            <button onClick={() => navigate('/')} className="btn-secondary">
+            <button type="button" onClick={() => navigate('/')} className="btn-secondary">
               <ChevronLeft className="w-5 h-5" />
               Volver
             </button>
             <button
-              onClick={handleSubmit}
+              type="submit"
               className="btn-primary"
               disabled={isSubmitting || isCheckingAccess || blocked}
             >
@@ -442,13 +458,13 @@ export function StudentForm() {
                 </>
               ) : (
                 <>
-                  Continuar
+                  Continuar al examen
                   <ChevronRight className="w-5 h-5" />
                 </>
               )}
             </button>
           </div>
-        </div>
+        </form>
       </main>
     </div>
   );

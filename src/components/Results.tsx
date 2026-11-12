@@ -193,11 +193,16 @@ export function Results() {
 
           <div className="mt-6 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
             <div>
+              <div className="flex items-center gap-5">
+              <ScoreRing correct={totalCorrect} wrong={wrongCount} blank={blankCount} percentage={result.percentage} />
+              <div className="min-w-0">
               <SectionLabel>Nota</SectionLabel>
-              <p className="num font-display font-extrabold text-jungle-800 leading-none mt-2 text-[56px]">
+              <p className="num font-display font-extrabold text-jungle-800 leading-none mt-2 text-[48px] sm:text-[56px]">
                 {formatVigesimalScore(result.vigesimalScore)}
                 <span className="text-2xl font-semibold text-subtle"> / {scaleMax}</span>
               </p>
+              </div>
+              </div>
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 {result.passed !== null && passing !== null && (
                   <span
@@ -211,10 +216,11 @@ export function Results() {
                     <span className="font-medium opacity-80">· mínimo {passing}</span>
                   </span>
                 )}
-                <span className="pill num">
-                  {result.percentage.toFixed(1)}% de acierto
-                  {hasWeightedPoints && <> · {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)} pts</>}
-                </span>
+                {hasWeightedPoints && (
+                  <span className="pill num">
+                    {formatPoints(result.rawScore)} / {formatPoints(result.maxPoints)} pts
+                  </span>
+                )}
               </div>
             </div>
 
@@ -753,7 +759,7 @@ export function Results() {
           <span className="contents [&_button]:!bg-jungle-800 [&_button:hover]:!bg-jungle-600">
             <PDFGenerator result={result} />
           </span>
-          <button onClick={() => navigate('/banqueo')} className="btn-secondary">
+          <button onClick={() => navigate('/banqueo/cursos')} className="btn-secondary">
             <Target className="w-4 h-4" />
             Practicar mis cursos débiles
           </button>
@@ -767,6 +773,50 @@ export function Results() {
       </main>
 
       <TerminalFooter />
+    </div>
+  );
+}
+
+// Anillo de resultado: correctas (verde), incorrectas (rojo) y en blanco (gris), con el % al centro
+function ScoreRing({ correct, wrong, blank, percentage }: { correct: number; wrong: number; blank: number; percentage: number }) {
+  const total = Math.max(1, correct + wrong + blank);
+  const r = 40;
+  const c = 2 * Math.PI * r;
+  const segs = [
+    { v: correct, color: '#16A34A' },
+    { v: wrong, color: '#DC2626' },
+    { v: blank, color: '#E2E8E6' },
+  ];
+  let offset = 0;
+  return (
+    <div className="relative w-[104px] h-[104px] shrink-0" role="img" aria-label={`${correct} correctas, ${wrong} incorrectas, ${blank} en blanco`}>
+      <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90" aria-hidden>
+        <circle cx="50" cy="50" r={r} fill="none" stroke="#F6F8F7" strokeWidth="12" />
+        {segs.map((sg, i) => {
+          const len = (sg.v / total) * c;
+          const el = sg.v > 0 ? (
+            <circle
+              key={i}
+              cx="50"
+              cy="50"
+              r={r}
+              fill="none"
+              stroke={sg.color}
+              strokeWidth="12"
+              strokeDasharray={`${len} ${c - len}`}
+              strokeDashoffset={-offset}
+            />
+          ) : null;
+          offset += len;
+          return el;
+        })}
+      </svg>
+      <span className="absolute inset-0 grid place-items-center">
+        <span className="text-center leading-none">
+          <span className="block num text-xl font-bold text-ink">{Math.round(percentage)}%</span>
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mt-1">acierto</span>
+        </span>
+      </span>
     </div>
   );
 }

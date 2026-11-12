@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { areaImg } from '../utils/imagenes';
 import { useNavigate } from 'react-router-dom';
 import {
-  Brain, ArrowLeft, Activity, Heart, Microscope, Zap, Target, FileText, BookOpen, Loader2, AlertCircle, ChevronRight, Layers
+  ArrowLeft, Activity, Heart, Microscope, Zap, Target, FileText, BookOpen, Loader2, AlertCircle, ChevronRight, Layers
 } from 'lucide-react';
 import { getConfig, getBanqueoCatalog, BackendViejoError, type BanqueoCatalog } from '../services/api';
 import { leerProgreso, coberturaCurso, sesionPendiente, borrarSesion } from '../utils/progresoBanqueo';
@@ -11,7 +11,7 @@ import { useExamCatalog, useExamStore } from '../hooks/useExam';
 import { ENCIB_FALLBACK_CONFIG } from '../types';
 import type { Course } from '../types';
 import { ExamSelector } from './ExamSelector';
-import { TopBar, TerminalFooter, Accordion, AccordionItem } from './terminal';
+import { TopBar, TerminalFooter } from './terminal';
 import { FlashcardReview, readDeck, type StudyCard } from './study';
 
 const BANQUEO_EXAM_KEY = 'banqueo_exam';
@@ -165,7 +165,7 @@ export function BanqueoCourseSelection() {
             </button>
             <button onClick={() => navigate('/banqueo')} className="btn-ghost">
               <ArrowLeft className="w-4 h-4" />
-              Salir del banqueo
+              Salir
             </button>
           </div>
         </div>
@@ -263,15 +263,6 @@ export function BanqueoCourseSelection() {
           <p className="mt-4 text-[12px] text-subtle">{catalogNotice}</p>
         )}
 
-        <div className="max-w-[700px] mt-10">
-          <Accordion>
-            <AccordionItem title="Método Active Recall" icon={<Brain className="w-4 h-4" />}>
-              Después de responder cada pregunta, verás inmediatamente si tu respuesta fue correcta
-              y cuál era la respuesta correcta. Este método de retroalimentación inmediata
-              mejora significativamente la retención de información.
-            </AccordionItem>
-          </Accordion>
-        </div>
       </main>
 
       <TerminalFooter />
