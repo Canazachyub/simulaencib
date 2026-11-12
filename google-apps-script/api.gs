@@ -35,6 +35,23 @@
  *     → { exam, course, total, items:[{id,tema,subtema,fuente}] }   (filtros separados por "|", AND entre grupos)
  *   ?action=banqueoPorIds&exam=X&course=Y&ids=id1,id2,...   (máx. 30)
  *     → { exam, course, totalQuestions, questions:[Question...], missing:[ids no encontrados] }  (en el orden pedido)
+ *
+ * SEGURIDAD (v3): todo contenido exige un token de sesión en el parámetro "t" (se sigue usando GET por CORS).
+ *   checkAccess / checkBanqueoAccess → si canAccess, devuelven además { token, tokenExpiresIn }.
+ *   Token "sim": questions, gradeSimulacro, register, saveScore (obsoleto), getHistory.
+ *   Token "banqueo": getBanqueoQuestions, banqueoIds, banqueoPorIds, register, getHistory.
+ *   Públicas: exams, config, banqueoCatalog, test.
+ *   El DNI SIEMPRE sale del token (los parámetros dni/email se ignoran salvo en checkAccess*).
+ *   ?action=questions&exam=X&t=TOKEN
+ *     → { exam, attemptId, expiresInSeconds, questions:[Question SIN correctAnswer ni justification] }
+ *   ?action=gradeSimulacro&exam=X&t=TOKEN&attemptId=A&answers=0-21...   (1 carácter por pregunta, '-' = en blanco)
+ *     → { exam, attemptId, correctAnswers, totalQuestions, rawScore, maxPoints, vigesimalScore, scaleMax, passing,
+ *         saved, results:[{id, selected, correctAnswer, justification}] }   (idempotente; guarda el puntaje una vez)
+ *   Errores: { success:false, error:"mensaje en español", code } con code ∈ AUTH_REQUIRED, AUTH_EXPIRED,
+ *     FORBIDDEN, TOKEN_USED, QUOTA, ATTEMPT_NOT_FOUND, BUSY, BAD_REQUEST, BAD_ACTION, ERROR.
+ *   Cuotas y vencimientos: constantes LIMITS / *_TTL_SECONDS más abajo. Para desbloquear a un alumno:
+ *     resetQuotasForDni('DNI') desde el editor. Prueba: testSecurityFlow().
+ *   Contadores diarios en Propiedades del script (claves "d:AAAAMMDD:..."; se purgan solos cada día).
  */
 
 // ============================================
@@ -95,6 +112,25 @@ const COURSE_ORDER = [
 const CONFIG_CACHE_SECONDS = 600;
 
 // ============================================
+// SEGURIDAD — tokens y cuotas (ajustar aquí)
+// ============================================
+const TOKEN_TTL_SECONDS = 3 * 60 * 60;      // token del banqueo: 3 h, se renueva con cada uso
+const SIM_TOKEN_TTL_SECONDS = 6 * 60 * 60;  // token del simulacro: 6 h (el RM dura 4 h; 6 h es el máximo de CacheService)
+const ATTEMPT_TTL_SECONDS = 6 * 60 * 60;    // clave de respuestas de un intento de simulacro
+const QUOTA_TZ = 'America/Lima';            // "día" y "hora" de las cuotas
+const LIMITS = {
+  ACCESOS_HORA: 40,              // checkAccess + checkBanqueoAccess por DNI y hora (el formulario verifica mientras se escribe)
+  SIM_GRATIS_DIA: 2,             // simulacros gratis generados por DNI, examen y día (1 + 1 reintento si falla la red)
+  SIM_GRATIS_GLOBAL_HORA: 300,   // simulacros gratis de TODO el sitio por hora (frena la creación masiva de DNI falsos)
+  SIM_HORA: 3,                   // simulacros (action=questions) por DNI confirmado y hora
+  SIM_DIA: 8,                    // ... y por día
+  BANQUEO_IDS_HORA: 60,          // llamadas a banqueoIds por DNI y hora
+  BANQUEO_PREGUNTAS_HORA: 400,   // preguntas NUEVAS del banqueo (banqueoPorIds + getBanqueoQuestions) por DNI y hora
+  BANQUEO_PREGUNTAS_DIA: 1500,   // ... y por día
+  HISTORIAL_HORA: 60             // getHistory por DNI y hora
+};
+
+// ============================================
 // ENDPOINT REST
 // ============================================
 function doGet(e) {
@@ -103,23 +139,49 @@ function doGet(e) {
     const action = p.action;
     const examId = resolveExamId(p.exam);
     let result;
+    let info;
 
     switch (action) {
+      // ----- Públicas (sin datos sensibles) -----
       case 'exams':
         result = listExams();
         break;
       case 'config':
         result = getConfig(examId);
         break;
+      case 'banqueoCatalog':
+        result = getBanqueoCatalog(examId);
+        break;
+      case 'test':
+        result = { status: 'ok', message: 'API SINAPSIS multi-examen funcionando', exams: EXAM_ORDER, secure: true, timestamp: new Date().toISOString() };
+        break;
+
+      // ----- Acceso: emiten el token de sesión -----
+      case 'checkAccess':
+        if (!p.dni) throw apiError_('BAD_REQUEST', 'Parámetro "dni" requerido');
+        result = checkUserAccess(cleanDni_(p.dni), p.email || '', examId);
+        break;
+      case 'checkBanqueoAccess':
+        if (!p.dni) throw apiError_('BAD_REQUEST', 'Parámetro "dni" requerido');
+        result = checkBanqueoAccess(cleanDni_(p.dni), p.email || '');
+        break;
+
+      // ----- Simulacro (token scope "sim") -----
       case 'questions':
-        result = getQuestions(examId);
+        result = getSimulacro_(p.t, examId);
+        break;
+      case 'gradeSimulacro':
+        result = gradeSimulacro_(p.t, p.attemptId, p.answers, examId);
         break;
       case 'register':
-        result = registerUser(p.dni || '', p.fullName || '', p.email || '', p.phone || '', p.university || '');
+        info = requireToken_(p.t, ['sim', 'banqueo'], null);
+        result = registerUser(info.d, p.fullName || '', info.e, p.phone || '', p.university || '');
         break;
       case 'saveScore':
+        // Obsoleto: gradeSimulacro ya guarda el puntaje. Se mantiene por compatibilidad, con el DNI del token.
+        info = requireToken_(p.t, ['sim'], examId);
         result = saveUserScore(
-          p.dni || '',
+          info.d,
           parseInt(p.correctAnswers) || 0,
           parseInt(p.totalQuestions) || 100,
           parseFloat(p.rawScore) || 0,
@@ -128,46 +190,44 @@ function doGet(e) {
         );
         break;
       case 'getHistory':
-        if (!p.dni) return createErrorResponse('Parámetro "dni" requerido');
-        result = getUserHistory(p.dni, examId);
+        info = requireToken_(p.t, ['sim', 'banqueo'], null);
+        withLock_(function () { consumeQuota_('hist', info.d, 1, LIMITS.HISTORIAL_HORA, 0, 'consultas de historial'); });
+        result = getUserHistory(info.d, examId);
         break;
-      case 'checkAccess':
-        if (!p.dni) return createErrorResponse('Parámetro "dni" requerido');
-        result = checkUserAccess(p.dni, p.email || '', examId);
-        break;
-      case 'checkBanqueoAccess':
-        if (!p.dni) return createErrorResponse('Parámetro "dni" requerido');
-        result = checkBanqueoAccess(p.dni, p.email || '');
-        break;
+
+      // ----- Banqueo (token scope "banqueo") -----
       case 'getBanqueoQuestions':
-        if (!p.course) return createErrorResponse('Parámetro "course" requerido');
-        result = getBanqueoQuestions(p.course, examId);
-        break;
-      case 'banqueoCatalog':
-        result = getBanqueoCatalog(examId);
+        if (!p.course) throw apiError_('BAD_REQUEST', 'Parámetro "course" requerido');
+        info = requireToken_(p.t, ['banqueo'], examId);
+        result = getBanqueoQuestions(p.course, examId, info.d);
         break;
       case 'banqueoIds':
-        if (!p.course) return createErrorResponse('Parámetro "course" requerido');
+        if (!p.course) throw apiError_('BAD_REQUEST', 'Parámetro "course" requerido');
+        info = requireToken_(p.t, ['banqueo'], examId);
+        withLock_(function () { consumeQuota_('bids', info.d, 1, LIMITS.BANQUEO_IDS_HORA, 0, 'consultas de la lista de preguntas'); });
         result = getBanqueoIds(examId, p.course, {
           temas: splitList_(p.temas, '|'),
           subtemas: splitList_(p.subtemas, '|'),
           fuentes: splitList_(p.fuentes, '|')
         });
         break;
-      case 'banqueoPorIds':
-        if (!p.course) return createErrorResponse('Parámetro "course" requerido');
-        if (!p.ids) return createErrorResponse('Parámetro "ids" requerido');
-        result = getBanqueoPorIds(examId, p.course, splitList_(p.ids, ','));
+      case 'banqueoPorIds': {
+        if (!p.course) throw apiError_('BAD_REQUEST', 'Parámetro "course" requerido');
+        if (!p.ids) throw apiError_('BAD_REQUEST', 'Parámetro "ids" requerido');
+        info = requireToken_(p.t, ['banqueo'], examId);
+        const ids = splitList_(p.ids, ',');
+        if (ids.length > BANQUEO_MAX_POR_IDS) throw apiError_('BAD_REQUEST', 'Máximo ' + BANQUEO_MAX_POR_IDS + ' ids por llamada');
+        consumeBanqueo_(info.d, ids);
+        result = getBanqueoPorIds(examId, p.course, ids);
         break;
-      case 'test':
-        result = { status: 'ok', message: 'API SINAPSIS multi-examen funcionando', exams: EXAM_ORDER, timestamp: new Date().toISOString() };
-        break;
+      }
       default:
-        return createErrorResponse('Acción no válida. Use: exams, config, questions, register, saveScore, getHistory, checkAccess, checkBanqueoAccess, getBanqueoQuestions, banqueoCatalog, banqueoIds, banqueoPorIds o test');
+        return createErrorResponse('Acción no válida. Use: exams, config, questions, gradeSimulacro, register, saveScore, getHistory, checkAccess, checkBanqueoAccess, getBanqueoQuestions, banqueoCatalog, banqueoIds, banqueoPorIds o test', 'BAD_ACTION');
     }
     return createSuccessResponse(result);
   } catch (error) {
-    return createErrorResponse(error.toString());
+    const msg = error && error.message ? error.message : String(error);
+    return createErrorResponse(msg, (error && error.code) || 'ERROR');
   }
 }
 
@@ -182,9 +242,262 @@ function createSuccessResponse(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function createErrorResponse(message) {
-  return ContentService.createTextOutput(JSON.stringify({ success: false, error: message }))
+function createErrorResponse(message, code) {
+  return ContentService.createTextOutput(JSON.stringify({ success: false, error: message, code: code || 'ERROR' }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================
+// SEGURIDAD: tokens de sesión, cuotas y calificación en el servidor
+// ============================================
+
+/** Error con código para el cliente (AUTH_REQUIRED, AUTH_EXPIRED, FORBIDDEN, TOKEN_USED, QUOTA, ...). */
+function apiError_(code, message) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+
+function cleanDni_(raw) {
+  const d = String(raw || '').trim();
+  if (!d || d.length > 20 || !/^[0-9A-Za-z-]+$/.test(d)) throw apiError_('BAD_REQUEST', 'DNI no válido');
+  return d;
+}
+
+/** 64 caracteres hex aleatorios (dos UUID v4 de Utilities.getUuid, generador seguro). */
+function newSecret_() {
+  return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').toLowerCase();
+}
+
+function tokenTtl_(info) {
+  return info.s === 'sim' ? SIM_TOKEN_TTL_SECONDS : TOKEN_TTL_SECONDS;
+}
+
+/**
+ * info = { d: dni, e: email, s: 'sim'|'banqueo', x: examId|'*', f: primer intento gratis, n: llamadas a questions restantes (solo gratis) }
+ */
+function issueToken_(info) {
+  const t = newSecret_();
+  saveToken_(t, info);
+  return t;
+}
+
+function saveToken_(t, info) {
+  const ttl = tokenTtl_(info);
+  info.exp = Date.now() + ttl * 1000;
+  CacheService.getScriptCache().put('tok:' + t, JSON.stringify(info), ttl);
+}
+
+function readToken_(t) {
+  if (!t || !/^[a-f0-9]{64}$/.test(String(t))) return null;
+  const raw = CacheService.getScriptCache().get('tok:' + t);
+  if (!raw) return null;
+  const info = JSON.parse(raw);
+  return info && info.exp > Date.now() ? info : null;
+}
+
+/** Valida el token (parámetro "t") y refresca su vencimiento. examId null = cualquier examen. */
+function requireToken_(t, scopes, examId) {
+  if (!t) throw apiError_('AUTH_REQUIRED', 'Sesión requerida: vuelve a ingresar con tu DNI y correo.');
+  const info = readToken_(t);
+  if (!info) throw apiError_('AUTH_EXPIRED', 'Tu sesión expiró: vuelve a ingresar con tu DNI y correo.');
+  if (scopes.indexOf(info.s) === -1) throw apiError_('FORBIDDEN', 'Tu sesión no da acceso a esta sección.');
+  if (examId && info.x !== '*' && info.x !== examId) throw apiError_('FORBIDDEN', 'Tu sesión es de otro examen: vuelve a ingresar tus datos.');
+  saveToken_(t, info);
+  return info;
+}
+
+function hourBucket_() { return Utilities.formatDate(new Date(), QUOTA_TZ, 'yyyyMMddHH'); }
+function dayBucket_() { return Utilities.formatDate(new Date(), QUOTA_TZ, 'yyyyMMdd'); }
+function minutesToNextHour_() { return 60 - parseInt(Utilities.formatDate(new Date(), QUOTA_TZ, 'm'), 10); }
+
+/** Ejecuta fn con el candado del script (las cuotas y los tokens de un solo uso no admiten carreras). */
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw apiError_('BUSY', 'El servidor está ocupado. Intenta de nuevo en unos segundos.');
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+/** Borra los contadores diarios de días anteriores (una vez al día). */
+function purgeOldDaily_(props) {
+  const today = dayBucket_();
+  if (props.getProperty('d_day') === today) return;
+  props.getKeys().forEach(function (k) {
+    if (k.indexOf('d:') === 0 && k.indexOf('d:' + today + ':') !== 0) props.deleteProperty(k);
+  });
+  props.setProperty('d_day', today);
+}
+
+/**
+ * Suma "amount" a los contadores de "name" para "subject" (DNI): por hora en CacheService y por día en
+ * PropertiesService (CacheService dura máx. 6 h). perHour/perDay = 0 → sin ese límite.
+ * Lanza QUOTA (sin consumir nada) si se pasa. Llamar dentro de withLock_.
+ */
+function consumeQuota_(name, subject, amount, perHour, perDay, label) {
+  const cache = CacheService.getScriptCache();
+  const hk = 'h:' + name + ':' + subject + ':' + hourBucket_();
+  const usedH = parseInt(cache.get(hk), 10) || 0;
+  let props = null, dk = null, usedD = 0;
+  if (perDay) {
+    props = PropertiesService.getScriptProperties();
+    purgeOldDaily_(props);
+    dk = 'd:' + dayBucket_() + ':' + name + ':' + subject;
+    usedD = parseInt(props.getProperty(dk), 10) || 0;
+  }
+  if (perHour && usedH + amount > perHour) {
+    throw apiError_('QUOTA', 'Llegaste al límite de ' + label + ' por hora (' + perHour + '). Vuelve a intentarlo en ' +
+      minutesToNextHour_() + ' min.');
+  }
+  if (perDay && usedD + amount > perDay) {
+    throw apiError_('QUOTA', 'Llegaste al límite diario de ' + label + ' (' + perDay + '). Vuelve mañana.');
+  }
+  if (amount <= 0) return;
+  cache.put(hk, String(usedH + amount), 3700);
+  if (dk) props.setProperty(dk, String(usedD + amount));
+}
+
+/** Banqueo: solo cuentan las preguntas NUEVAS del día (volver a pedir una ya vista no gasta cuota). */
+function consumeBanqueo_(dni, ids) {
+  withLock_(function () {
+    const cache = CacheService.getScriptCache();
+    const key = 'seen:' + dni + ':' + dayBucket_();
+    const raw = cache.get(key) || '';
+    const seen = {};
+    raw.split(',').forEach(function (id) { if (id) seen[id] = true; });
+    const fresh = [];
+    ids.forEach(function (id) { if (!seen[id]) { seen[id] = true; fresh.push(id); } });
+    consumeQuota_('bq', dni, fresh.length, LIMITS.BANQUEO_PREGUNTAS_HORA, LIMITS.BANQUEO_PREGUNTAS_DIA, 'preguntas del banqueo');
+    if (fresh.length) {
+      const next = raw ? raw + ',' + fresh.join(',') : fresh.join(',');
+      if (next.length < 95000) cache.put(key, next, 21600);
+    }
+  });
+}
+
+// ----- Simulacro: preguntas sin respuestas + intento guardado en el servidor -----
+
+function stripAnswers_(q) {
+  const out = {};
+  Object.keys(q).forEach(function (k) { if (k !== 'correctAnswer' && k !== 'justification') out[k] = q[k]; });
+  return out;
+}
+
+function getSimulacro_(t, examId) {
+  const info = requireToken_(t, ['sim'], examId);
+  withLock_(function () {
+    if (info.f) {
+      const cur = readToken_(t);
+      if (!cur || !(cur.n > 0)) {
+        throw apiError_('TOKEN_USED', 'Esta sesión ya generó tu simulacro gratuito. Vuelve a ingresar tus datos para reintentar.');
+      }
+      consumeQuota_('simfree', examId + ':' + info.d, 1, 0, LIMITS.SIM_GRATIS_DIA, 'simulacros gratuitos generados');
+      consumeQuota_('simfree_all', 'all', 1, LIMITS.SIM_GRATIS_GLOBAL_HORA, 0, 'simulacros gratuitos del sitio');
+      cur.n = 0;
+      saveToken_(t, cur);
+    } else {
+      consumeQuota_('sim', info.d, 1, LIMITS.SIM_HORA, LIMITS.SIM_DIA, 'simulacros');
+    }
+  });
+
+  const full = getQuestions(examId);
+  const attemptId = newSecret_();
+  const att = {
+    d: info.d, x: examId, f: !!info.f, c: Date.now(),
+    q: full.map(function (q) { return [q.id, q.correctAnswer, q.points]; })
+  };
+  const justifs = full.map(function (q) { return q.justification || null; });
+  const cache = CacheService.getScriptCache();
+  cache.put('attk:' + attemptId, JSON.stringify(att), ATTEMPT_TTL_SECONDS);
+  cachePutChunked_(cache, 'attj:' + attemptId, JSON.stringify(justifs), ATTEMPT_TTL_SECONDS);
+  return {
+    exam: examId,
+    attemptId: attemptId,
+    expiresInSeconds: ATTEMPT_TTL_SECONDS,
+    questions: full.map(stripAnswers_)
+  };
+}
+
+/** Justificaciones por id base (si la caché del intento se perdió, se releen las hojas). */
+function reloadJustifications_(examId, ids) {
+  const ss = SpreadsheetApp.openById(EXAMS[examId].spreadsheetId);
+  const wanted = {};
+  ids.forEach(function (id) { wanted[String(id).replace(/-\d+$/, '')] = null; });
+  const sheets = [];
+  getExamCourses(examId).forEach(function (c) { c.sheets.forEach(function (s) { if (sheets.indexOf(s) === -1) sheets.push(s); }); });
+  readBankRows(ss, sheets).forEach(function (q) {
+    const id = rowId_(q);
+    if (wanted.hasOwnProperty(id) && wanted[id] === null) wanted[id] = safeCell(q.data, q.cols.justification) || '';
+  });
+  return ids.map(function (id) { return wanted[String(id).replace(/-\d+$/, '')] || null; });
+}
+
+/**
+ * Califica en el servidor. answers = un carácter por pregunta, en el orden servido:
+ * '0'..'9' = índice elegido, '-' (u otro) = en blanco. Guarda el puntaje con el DNI del intento.
+ * Idempotente: si se reintenta, devuelve la misma calificación sin volver a guardar.
+ */
+function gradeSimulacro_(t, attemptId, answers, examId) {
+  const info = requireToken_(t, ['sim'], examId);
+  attemptId = String(attemptId || '');
+  if (!/^[a-f0-9]{64}$/.test(attemptId)) throw apiError_('BAD_REQUEST', 'Parámetro "attemptId" no válido');
+  const cache = CacheService.getScriptCache();
+  const raw = cache.get('attk:' + attemptId);
+  if (!raw) throw apiError_('ATTEMPT_NOT_FOUND', 'Este intento expiró (más de 6 horas) o no existe. Inicia un simulacro nuevo.');
+  const att = JSON.parse(raw);
+  if (att.d !== info.d || att.x !== examId) throw apiError_('FORBIDDEN', 'Este intento pertenece a otra sesión.');
+
+  const done = withLock_(function () {
+    const prev = cacheGetChunked_(cache, 'attr:' + attemptId);
+    if (prev) return prev;
+    if (cache.get('attg:' + attemptId)) throw apiError_('BUSY', 'Tu examen se está calificando. Intenta de nuevo en unos segundos.');
+    cache.put('attg:' + attemptId, '1', 120);
+    return null;
+  });
+  if (done) return JSON.parse(done);
+
+  try {
+    const ans = String(answers || '');
+    const exam = EXAMS[examId];
+    let correct = 0, raw2 = 0, max = 0;
+    const picks = att.q.map(function (row, i) {
+      const ch = ans.charAt(i);
+      const sel = /^[0-9]$/.test(ch) ? parseInt(ch, 10) : null;
+      const pts = Number(row[2]) > 0 ? Number(row[2]) : 1;
+      max += pts;
+      if (sel !== null && sel === row[1]) { correct++; raw2 += pts; }
+      return sel;
+    });
+    const round2 = function (v) { return Math.round(v * 100) / 100; };
+    const scaleMax = exam.scaleMax > 0 ? exam.scaleMax : 20;
+    const nota = max > 0 ? round2((raw2 / max) * scaleMax) : 0;
+
+    let justifs = null;
+    const jRaw = cacheGetChunked_(cache, 'attj:' + attemptId);
+    if (jRaw) justifs = JSON.parse(jRaw);
+    else justifs = reloadJustifications_(examId, att.q.map(function (r) { return r[0]; }));
+
+    saveUserScore(att.d, correct, att.q.length, round2(raw2), nota, examId);
+
+    const result = {
+      exam: examId,
+      attemptId: attemptId,
+      correctAnswers: correct,
+      totalQuestions: att.q.length,
+      rawScore: round2(raw2),
+      maxPoints: round2(max),
+      vigesimalScore: nota,
+      scaleMax: scaleMax,
+      passing: exam.passing,
+      saved: true,
+      results: att.q.map(function (row, i) {
+        return { id: row[0], selected: picks[i], correctAnswer: row[1], justification: justifs[i] || null };
+      })
+    };
+    cachePutChunked_(cache, 'attr:' + attemptId, JSON.stringify(result), ATTEMPT_TTL_SECONDS);
+    return result;
+  } finally {
+    cache.remove('attg:' + attemptId);
+  }
 }
 
 // ============================================
@@ -446,7 +759,7 @@ function selectRandomItems(array, count) {
 // ============================================
 // BANQUEO (práctica por curso, 10 preguntas)
 // ============================================
-function getBanqueoQuestions(courseName, examId) {
+function getBanqueoQuestions(courseName, examId, dni) {
   const exam = EXAMS[examId];
   const course = getExamCourses(examId).filter(function (c) { return c.name === courseName; })[0];
   if (!course) return { error: 'Curso no válido', questions: [] };
@@ -455,8 +768,11 @@ function getBanqueoQuestions(courseName, examId) {
   const pool = readBankRows(ss, course.sheets);
   if (!pool.length) return { error: 'No hay preguntas disponibles', questions: [] };
 
+  const picked = selectRandomItems(pool, 10);
+  // La cuota se cobra antes de devolver nada (si se pasa, no sale ninguna pregunta)
+  if (dni) consumeBanqueo_(dni, picked.map(rowId_));
   const usedIds = {};
-  const questions = selectRandomItems(pool, 10).map(function (q, i) {
+  const questions = picked.map(function (q, i) {
     let id = rowId_(q);
     if (usedIds[id]) id = id + '-' + (++usedIds[id]); else usedIds[id] = 1;
     return formatQuestion(q, { id: id, number: i + 1, subject: courseName, points: course.points });
@@ -498,12 +814,15 @@ function banqueoCacheKey_(examId, courseName) {
   return 'bidx_' + examId + '_' + fnv1a32_(courseName, 0x811c9dc5).toString(36);
 }
 
-function cachePutChunked_(cache, key, str) {
+function cachePutChunked_(cache, key, str, ttl) {
   const parts = {};
-  const n = Math.ceil(str.length / BANQUEO_CHUNK) || 1;
-  for (let i = 0; i < n; i++) parts[key + '_' + i] = str.substr(i * BANQUEO_CHUNK, BANQUEO_CHUNK);
+  // 90 000 caracteres por trozo: con tildes/HTML en UTF-8 un trozo puede pasar de 100 KB, así que
+  // para textos largos (justificaciones) se usa un trozo más chico.
+  const size = ttl ? 30000 : BANQUEO_CHUNK;
+  const n = Math.ceil(str.length / size) || 1;
+  for (let i = 0; i < n; i++) parts[key + '_' + i] = str.substr(i * size, size);
   parts[key + '_n'] = String(n);
-  try { cache.putAll(parts, BANQUEO_CACHE_SECONDS); } catch (err) { console.log('Cache llena: ' + err); }
+  try { cache.putAll(parts, ttl || BANQUEO_CACHE_SECONDS); } catch (err) { console.log('Cache llena: ' + err); }
 }
 
 function cacheGetChunked_(cache, key) {
@@ -753,9 +1072,26 @@ function isConfirmed_(ss, dni, emailLower) {
   return false;
 }
 
+/**
+ * Simulacro. Si concede acceso, agrega { token, tokenExpiresIn }: token scope "sim" atado a DNI + email + examen.
+ * Primer intento gratis → el token permite UNA sola llamada a action=questions.
+ */
 function checkUserAccess(dni, email, examId) {
   if (!dni) return { canAccess: false, reason: 'DNI requerido', attemptCount: 0 };
   examId = examId || 'encib';
+  withLock_(function () { consumeQuota_('acc', dni, 1, LIMITS.ACCESOS_HORA, 0, 'verificaciones de acceso'); });
+  const r = checkUserAccessRaw_(dni, email, examId);
+  if (r.canAccess) {
+    r.token = issueToken_({
+      d: dni, e: (email || '').toLowerCase().trim(), s: 'sim', x: examId,
+      f: !!r.isFirstAttempt, n: r.isFirstAttempt ? 1 : -1
+    });
+    r.tokenExpiresIn = SIM_TOKEN_TTL_SECONDS;
+  }
+  return r;
+}
+
+function checkUserAccessRaw_(dni, email, examId) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const emailLower = (email || '').toLowerCase().trim();
 
@@ -796,13 +1132,19 @@ function checkUserAccess(dni, email, examId) {
   return { canAccess: false, reason: 'Requiere inscripción para más intentos', attemptCount: attemptCount, isFirstAttempt: false, isConfirmed: false, isFraudAttempt: false };
 }
 
+/** Banqueo: solo confirmados. Si concede acceso, agrega { token, tokenExpiresIn } (scope "banqueo", todos los exámenes). */
 function checkBanqueoAccess(dni, email) {
   if (!dni) return { canAccess: false, reason: 'DNI requerido' };
+  withLock_(function () { consumeQuota_('acc', dni, 1, LIMITS.ACCESOS_HORA, 0, 'verificaciones de acceso'); });
+  const emailLower = (email || '').toLowerCase().trim();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const ok = isConfirmed_(ss, dni, (email || '').toLowerCase().trim());
-  return ok
-    ? { canAccess: true, reason: 'Acceso autorizado al Banqueo', isConfirmed: true }
-    : { canAccess: false, reason: 'El Banqueo es exclusivo para usuarios inscritos', isConfirmed: false };
+  const ok = isConfirmed_(ss, dni, emailLower);
+  if (!ok) return { canAccess: false, reason: 'El Banqueo es exclusivo para usuarios inscritos', isConfirmed: false };
+  return {
+    canAccess: true, reason: 'Acceso autorizado al Banqueo', isConfirmed: true,
+    token: issueToken_({ d: dni, e: emailLower, s: 'banqueo', x: '*' }),
+    tokenExpiresIn: TOKEN_TTL_SECONDS
+  };
 }
 
 // ============================================
@@ -843,3 +1185,32 @@ function clearBanqueoCache() {
   console.log('Caché del banqueo borrada');
 }
 function clearConfigCache() { CacheService.getScriptCache().removeAll(EXAM_ORDER.map(function (id) { return 'cfg_' + id; })); }
+
+/**
+ * Desbloquea a un alumno que llegó a un límite diario: borra sus contadores de hoy.
+ * Uso desde el editor: resetQuotasForDni('12345678')
+ */
+function resetQuotasForDni(dni) {
+  const props = PropertiesService.getScriptProperties();
+  const today = dayBucket_();
+  props.getKeys().forEach(function (k) {
+    if (k.indexOf('d:' + today + ':') === 0 && (k.slice(-(':' + dni).length) === ':' + dni)) props.deleteProperty(k);
+  });
+  CacheService.getScriptCache().remove('seen:' + dni + ':' + today);
+  console.log('Cuotas diarias de ' + dni + ' reiniciadas (las horarias se liberan solas al cambiar la hora)');
+}
+
+/** Prueba del flujo seguro sin tocar las hojas (no guarda puntaje): token → banqueoIds → banqueoPorIds → errores. */
+function testSecurityFlow() {
+  const t = issueToken_({ d: 'TEST0000', e: 'test@example.com', s: 'banqueo', x: '*' });
+  const course = getExamCourses('enam')[0];
+  const ids = getBanqueoIds('enam', course.name, {}).items.slice(0, 3).map(function (i) { return i.id; });
+  consumeBanqueo_('TEST0000', ids);
+  console.log('Token banqueo OK, ' + ids.length + ' preguntas cobradas a la cuota');
+  try { requireToken_(t, ['sim'], 'enam'); console.log('MAL: scope no validado'); } catch (e) { console.log('OK scope: ' + e.code); }
+  try { requireToken_('', ['banqueo'], 'enam'); console.log('MAL: token vacío aceptado'); } catch (e) { console.log('OK vacío: ' + e.code); }
+  try { requireToken_(newSecret_(), ['banqueo'], 'enam'); console.log('MAL: token falso aceptado'); } catch (e) { console.log('OK falso: ' + e.code); }
+  const q = stripAnswers_(formatQuestion(readBankRows(SpreadsheetApp.openById(EXAMS.enam.spreadsheetId), course.sheets)[0], { number: 1, subject: course.name, points: 1 }));
+  console.log('Simulacro sin respuesta: ' + (q.correctAnswer === undefined && q.justification === undefined ? 'OK' : 'MAL'));
+  resetQuotasForDni('TEST0000');
+}

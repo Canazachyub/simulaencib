@@ -4,6 +4,8 @@ import { useExamStore, useCurrentQuestion, useProgress, useIsLastQuestion, useIs
 import { formatDuration } from '../utils/calculations';
 import { useTimer, formatTime } from '../hooks/useTimer';
 import { parseFormattedText } from './Question';
+import { Watermark, watermarkText, noCopyProps } from './Watermark';
+import { getSimSession } from '../services/api';
 import { timerTone } from './terminal';
 import type { Question as QuestionType, Student, ExamConfig } from '../types';
 import {
@@ -33,6 +35,8 @@ interface ProgressSnapshot {
   struck: Record<string, number[]>;
   visited: number[];
   highlights: Record<string, string>;
+  /** Intento en el servidor (para calificar tras recargar la página). */
+  attemptId?: string | null;
 }
 
 function readSnapshot(): ProgressSnapshot | null {
@@ -75,6 +79,7 @@ let restored: { remaining: number; ui: Pick<ProgressSnapshot, 'marked' | 'struck
     student: snap.student,
     config: snap.config,
     questions: snap.questions,
+    attemptId: snap.attemptId ?? null,
     savedAnswers: new Map(snap.answers),
     currentQuestionIndex: Math.min(snap.index, snap.questions.length - 1),
     startTime: start,
@@ -125,7 +130,9 @@ export function Quiz() {
     previousQuestion,
     goToQuestion,
     finishExam,
-    config
+    config,
+    attemptId,
+    gradeError
   } = useExamStore();
   const exam = useSelectedExam();
 
@@ -214,8 +221,14 @@ export function Quiz() {
     }
   }, [isFirstQuestion, previousQuestion]);
 
-  const handleFinishExam = useCallback(() => {
-    finishExam();
+  const [grading, setGrading] = useState(false);
+  const handleFinishExam = useCallback(async () => {
+    setGrading(true);
+    const ok = await finishExam();
+    setGrading(false);
+    if (!ok) return; // el error se muestra en el modal y se puede reintentar
+    clearSnapshot();
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     navigate('/resultados');
   }, [finishExam, navigate]);
 
@@ -291,10 +304,11 @@ export function Quiz() {
       marked: Array.from(marked),
       struck: struckMap,
       visited: Array.from(visited),
-      highlights
+      highlights,
+      attemptId
     });
   }, [status, student, startTime, questions, savedAnswers, currentQuestionIndex, marked, struckMap, visited,
-      highlights, config, selectedExamId, examDurationSeconds]);
+      highlights, config, selectedExamId, examDurationSeconds, attemptId]);
 
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
@@ -308,10 +322,12 @@ export function Quiz() {
   }, []);
 
   const submitExam = useCallback(() => {
-    clearSnapshot();
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    if (grading) return;
     handleFinishExam();
-  }, [handleFinishExam]);
+  }, [grading, handleFinishExam]);
+
+  // Marca de agua: DNI y correo del alumno
+  const wmText = useMemo(() => watermarkText(student?.dni, getSimSession()?.email), [student?.dni]);
 
   const isMarked = currentQuestion ? marked.has(currentQuestion.id) : false;
   const struck = useMemo(
@@ -544,7 +560,12 @@ export function Quiz() {
 
       {/* ===== Columna central ===== */}
       <main className="pt-[92px] pb-32 px-3 sm:px-5">
-        <div key={currentQuestion.id} className="max-w-[780px] mx-auto motion-safe:animate-q-in">
+        <div
+          key={currentQuestion.id}
+          className="relative no-copy max-w-[780px] mx-auto motion-safe:animate-q-in"
+          {...noCopyProps}
+        >
+          <Watermark text={wmText} color={prefs.theme === 'dark' ? '#ffffff' : '#000000'} opacity={prefs.theme === 'dark' ? 0.07 : 0.06} />
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <span className="inline-flex items-center h-7 px-3 rounded-full text-[13px] font-semibold bg-[var(--q-chip)] text-[color:var(--q-chip-ink)]">
               {currentQuestion.subject}
@@ -772,9 +793,10 @@ export function Quiz() {
                 </p>
               </>
             )}
+            {gradeError && <GradeErrorNote message={gradeError} />}
             <div className="mt-6 space-y-2">
-              <button onClick={submitExam} className="qz-btn-primary w-full">
-                Enviar la prueba
+              <button onClick={submitExam} disabled={grading} className="qz-btn-primary w-full">
+                {grading ? <><Loader2 className="w-5 h-5 animate-spin" /> Calificando…</> : gradeError ? 'Reintentar el envío' : 'Enviar la prueba'}
               </button>
               {unansweredCount > 0 && (
                 <button
@@ -806,8 +828,9 @@ export function Quiz() {
               Se acabó el tiempo del examen {exam.nombre} ({formatDuration(durationMinutes)}).
               Se calificará con lo que respondiste: <strong className="num text-[color:var(--q-ink)]">{answeredCount}</strong> de {questions.length}.
             </p>
-            <button onClick={submitExam} className="qz-btn-primary w-full mt-6">
-              Ver mis resultados
+            {gradeError && <GradeErrorNote message={gradeError} />}
+            <button onClick={submitExam} disabled={grading} className="qz-btn-primary w-full mt-6">
+              {grading ? <><Loader2 className="w-5 h-5 animate-spin" /> Calificando…</> : gradeError ? 'Reintentar' : 'Ver mis resultados'}
             </button>
           </div>
         </div>
@@ -898,7 +921,7 @@ function Stem({
         onMouseUp={applyHighlight}
         onTouchEnd={() => window.setTimeout(applyHighlight, 0)}
         onClick={onClick}
-        className={clsx('relative leading-[1.7] text-[color:var(--q-ink)]', highlightMode && 'cursor-text selection:bg-yellow-200')}
+        className={clsx('relative leading-[1.7] text-[color:var(--q-ink)]', highlightMode && 'allow-select cursor-text selection:bg-yellow-200')}
         style={{ fontSize: `calc(19px * var(--q-scale))` }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
@@ -1054,6 +1077,15 @@ function ReviewScreen({
         </div>
       </div>
     </div>
+  );
+}
+
+function GradeErrorNote({ message }: { message: string }) {
+  return (
+    <p role="alert" className="mt-4 rounded-xl border border-wrong/40 bg-wrong-bg text-wrong text-sm p-3 flex items-start gap-2">
+      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+      <span>{message} Tus respuestas siguen guardadas en este navegador.</span>
+    </p>
   );
 }
 

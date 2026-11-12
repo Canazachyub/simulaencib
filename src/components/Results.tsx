@@ -28,7 +28,7 @@ function barTone(percentage: number): { bar: string; text: string } {
 
 export function Results() {
   const navigate = useNavigate();
-  const { result, questions, resetExam } = useExamStore();
+  const { result, questions, resetExam, scoreSavedByServer } = useExamStore();
   const [showReview, setShowReview] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
@@ -52,8 +52,8 @@ export function Results() {
       const saveAndFetchHistory = async () => {
         setLoadingHistory(true);
 
-        // Guardar puntaje del examen (nota en su escala)
-        await saveScore({
+        // Con el servidor nuevo, gradeSimulacro ya guardó el puntaje; solo el backend viejo lo guarda desde aquí
+        if (!scoreSavedByServer) await saveScore({
           exam: result.examId,
           dni: result.student.dni,
           correctAnswers: result.correctAnswers,
@@ -73,7 +73,7 @@ export function Results() {
 
       saveAndFetchHistory();
     }
-  }, [result, navigate]);
+  }, [result, navigate, scoreSavedByServer]);
 
   // Datos para la revisión de preguntas
   const answerMap = useMemo(() => {

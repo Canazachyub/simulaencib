@@ -47,6 +47,129 @@ function examParam(examId?: string): string {
 }
 
 // ============================================
+// SESIONES (token emitido por el servidor en checkAccess / checkBanqueoAccess)
+// ============================================
+
+/** Error devuelto por el servidor con su código (AUTH_EXPIRED, QUOTA, TOKEN_USED, ...). */
+export class ApiError extends Error {
+  code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = code;
+  }
+}
+
+/** Sesión vencida o sin permiso: hay que volver a ingresar DNI y correo. */
+export class AuthError extends ApiError {
+  constructor(message: string, code: string) {
+    super(message, code);
+    this.name = 'AuthError';
+  }
+}
+
+const AUTH_CODES = new Set(['AUTH_REQUIRED', 'AUTH_EXPIRED', 'FORBIDDEN']);
+
+function toApiError(message: unknown, code: unknown): ApiError {
+  const msg = String(message || 'Error del servidor');
+  const c = String(code || 'ERROR');
+  return AUTH_CODES.has(c) ? new AuthError(msg, c) : new ApiError(msg, c);
+}
+
+export interface SimSession {
+  token: string;
+  dni: string;
+  email: string;
+  exam: string;
+}
+
+const SIM_SESSION_KEY = 'sim_session';
+const BANQUEO_TOKEN_KEY = 'banqueo_token';
+
+function storageGet(key: string): string | null {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+
+function storageSet(key: string, value: string | null) {
+  try {
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, value);
+  } catch {
+    // sin sessionStorage
+  }
+}
+
+/** Sesión del simulacro (DNI y correo verificados + token). */
+export function getSimSession(): SimSession | null {
+  try {
+    const s = JSON.parse(storageGet(SIM_SESSION_KEY) || 'null') as SimSession | null;
+    return s && s.dni ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function setSimSession(s: SimSession | null) {
+  storageSet(SIM_SESSION_KEY, s ? JSON.stringify(s) : null);
+}
+
+/** GET a la API. Lanza ApiError/AuthError con el código del servidor, o BackendViejoError. */
+async function callApi<T>(params: Record<string, string>, timeout = REQUEST_TIMEOUT): Promise<T> {
+  const url = `${API_BASE_URL}?${new URLSearchParams(params).toString()}`;
+  const response = await fetchWithTimeout(url, timeout);
+  if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+  const result = await response.json();
+  if (!result.success) {
+    if (esAccionNoValida(result.error)) throw new BackendViejoError();
+    throw toApiError(result.error, result.code);
+  }
+  const data = result.data as T & { error?: string };
+  if (data && typeof data === 'object' && !Array.isArray(data) && data.error) throw new Error(data.error);
+  return data;
+}
+
+/** Vuelve a pedir el token del simulacro con el DNI/correo ya verificados. */
+async function refreshSimToken(examId: string): Promise<string | null> {
+  const s = getSimSession();
+  if (!s) return null;
+  const r = await checkAccess(s.dni, s.email, examId);
+  return r.canAccess && r.token ? r.token : null;
+}
+
+/** Vuelve a pedir el token del banqueo con el DNI/correo guardados al ingresar. */
+async function refreshBanqueoToken(): Promise<string | null> {
+  const dni = storageGet('banqueo_dni');
+  const email = storageGet('banqueo_email');
+  if (!dni || !email) return null;
+  const r = await checkBanqueoAccess(dni, email);
+  return r.canAccess && r.token ? r.token : null;
+}
+
+/**
+ * Ejecuta una llamada con token; si el servidor dice que la sesión venció (o el token gratis ya se usó
+ * y se permite renovarlo), pide un token nuevo una sola vez y reintenta.
+ */
+async function withToken<T>(
+  getToken: () => string | null,
+  refresh: () => Promise<string | null>,
+  fn: (token: string) => Promise<T>,
+  retryCodes: string[] = []
+): Promise<T> {
+  try {
+    return await fn(getToken() || '');
+  } catch (err) {
+    const retry = err instanceof AuthError || (err instanceof ApiError && retryCodes.includes(err.code));
+    if (!retry) throw err;
+    const fresh = await refresh();
+    if (!fresh) throw err instanceof AuthError ? err : new AuthError(err.message, err.code);
+    return fn(fresh);
+  }
+}
+
+const simToken = () => getSimSession()?.token ?? null;
+const banqueoToken = () => storageGet(BANQUEO_TOKEN_KEY);
+
+// ============================================
 // CATÁLOGO DE EXÁMENES
 // ============================================
 
@@ -192,40 +315,93 @@ export async function getConfig(examId: string = DEFAULT_EXAM_ID): Promise<ExamC
   }
 }
 
+/** Preguntas de un simulacro. attemptId = null → backend viejo/mock: las respuestas vienen incluidas y se califica en el navegador. */
+export interface SimulacroLoad {
+  questions: Question[];
+  attemptId: string | null;
+}
+
+/** El servidor nuevo no envía la respuesta correcta: se marca con -1 hasta calificar. */
+export const UNKNOWN_ANSWER = -1;
+
 /**
- * Obtiene las preguntas aleatorias para el simulacro del examen indicado
+ * Obtiene las preguntas aleatorias para el simulacro del examen indicado (requiere la sesión de checkAccess).
  */
-export async function getQuestions(examId: string = DEFAULT_EXAM_ID): Promise<Question[]> {
+export async function getQuestions(examId: string = DEFAULT_EXAM_ID): Promise<SimulacroLoad> {
   if (USE_MOCK) {
     await new Promise(resolve => setTimeout(resolve, 800));
-    return generateMockQuestions();
+    return { questions: generateMockQuestions(), attemptId: null };
   }
+  const exam = examParam(examId);
   try {
-    const params = new URLSearchParams({ action: 'questions', exam: examParam(examId) });
-    const url = `${API_BASE_URL}?${params.toString()}`;
-    const response = await fetchWithTimeout(url);
-
-    if (!response.ok) {
-      throw new Error(`Error HTTP: ${response.status}`);
-    }
-
-    const result: ApiResponse<Question[]> = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || 'Error al obtener las preguntas');
-    }
-
-    return (result.data || []).map(q => ({
-      ...q,
-      points: toNumber(q.points, 1)
-    }));
+    const data = await withToken(
+      simToken,
+      () => refreshSimToken(exam),
+      t => callApi<Question[] | { attemptId: string; questions: Question[] }>({ action: 'questions', exam, t }),
+      ['TOKEN_USED']
+    );
+    const list = Array.isArray(data) ? data : (data?.questions || []);
+    const attemptId = Array.isArray(data) ? null : data?.attemptId || null;
+    return {
+      attemptId,
+      questions: list.map(q => ({
+        ...q,
+        correctAnswer: typeof q.correctAnswer === 'number' ? q.correctAnswer : UNKNOWN_ANSWER,
+        points: toNumber(q.points, 1)
+      }))
+    };
   } catch (error) {
     console.error('Error al obtener preguntas:', error);
+    if (error instanceof AuthError) {
+      throw new Error('Tu sesión expiró. Vuelve a "Tus datos" e ingresa tu DNI y correo otra vez.');
+    }
     throw new Error(
       error instanceof Error
         ? error.message
         : 'No se pudo cargar el examen. Por favor, intenta de nuevo.'
     );
+  }
+}
+
+export interface GradeItem {
+  id: string;
+  selected: number | null;
+  correctAnswer: number;
+  justification: string | null;
+}
+
+export interface GradeResult {
+  exam: string;
+  attemptId: string;
+  correctAnswers: number;
+  totalQuestions: number;
+  rawScore: number;
+  maxPoints: number;
+  vigesimalScore: number;
+  scaleMax: number;
+  passing: number | null;
+  saved: boolean;
+  results: GradeItem[];
+}
+
+/**
+ * Califica el simulacro en el servidor (que además guarda el puntaje).
+ * answers: respuesta elegida por pregunta, en el mismo orden en que llegaron (null = en blanco).
+ */
+export async function gradeSimulacro(examId: string, attemptId: string, answers: (number | null)[]): Promise<GradeResult> {
+  const exam = examParam(examId);
+  const encoded = answers.map(a => (a !== null && a >= 0 && a <= 9 ? String(a) : '-')).join('');
+  try {
+    return await withToken(
+      simToken,
+      () => refreshSimToken(exam),
+      t => callApi<GradeResult>({ action: 'gradeSimulacro', exam, t, attemptId, answers: encoded }, 45000)
+    );
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new Error('Tu sesión expiró y no se pudo renovar. Recarga la página para intentarlo de nuevo.');
+    }
+    throw error instanceof Error ? error : new Error('No se pudo calificar el examen. Intenta de nuevo.');
   }
 }
 
@@ -263,6 +439,7 @@ export async function registerUser(user: UserRegistration): Promise<void> {
   try {
     const params = new URLSearchParams({
       action: 'register',
+      t: simToken() || '',
       dni: user.dni,
       fullName: user.fullName,
       email: user.email,
@@ -328,6 +505,7 @@ export async function saveScore(data: ScoreData): Promise<void> {
   try {
     const params = new URLSearchParams({
       action: 'saveScore',
+      t: simToken() || '',
       exam: examParam(data.exam),
       dni: data.dni,
       correctAnswers: data.correctAnswers.toString(),
@@ -361,8 +539,9 @@ export async function getUserHistory(dni: string, examId: string = DEFAULT_EXAM_
   try {
     const params = new URLSearchParams({
       action: 'getHistory',
+      t: simToken() || banqueoToken() || '',
       exam: examParam(examId),
-      dni: dni
+      dni: dni // solo para el backend viejo: el nuevo usa el DNI del token
     });
 
     const url = `${API_BASE_URL}?${params.toString()}`;
@@ -396,6 +575,8 @@ export interface AccessCheckResult {
   isFirstAttempt?: boolean;
   isConfirmed?: boolean;
   isFraudAttempt?: boolean;
+  /** Token de sesión del simulacro (servidor nuevo). */
+  token?: string;
 }
 
 /**
@@ -424,10 +605,14 @@ export async function checkAccess(dni: string, email: string, examId: string = D
     const result = await response.json();
 
     if (!result.success) {
-      return { canAccess: false, reason: 'Error de verificación - intenta de nuevo', attemptCount: 0 };
+      return { canAccess: false, reason: result.error || 'Error de verificación - intenta de nuevo', attemptCount: 0 };
     }
 
-    return result.data as AccessCheckResult;
+    const data = result.data as AccessCheckResult;
+    if (data.canAccess) {
+      setSimSession({ token: data.token || '', dni, email: email.toLowerCase().trim(), exam: examParam(examId) });
+    }
+    return data;
   } catch (error) {
     console.error('Error al verificar acceso:', error);
     // En caso de error/timeout, DENEGAR acceso por seguridad
@@ -443,6 +628,8 @@ export interface BanqueoAccessResult {
   canAccess: boolean;
   reason: string;
   isConfirmed?: boolean;
+  /** Token de sesión del banqueo (servidor nuevo). */
+  token?: string;
 }
 
 export interface BanqueoQuestion {
@@ -496,10 +683,12 @@ export async function checkBanqueoAccess(dni: string, email: string): Promise<Ba
     const result = await response.json();
 
     if (!result.success) {
-      return { canAccess: false, reason: 'Error de verificación' };
+      return { canAccess: false, reason: result.error || 'Error de verificación' };
     }
 
-    return result.data as BanqueoAccessResult;
+    const data = result.data as BanqueoAccessResult;
+    storageSet(BANQUEO_TOKEN_KEY, data.canAccess && data.token ? data.token : null);
+    return data;
   } catch (error) {
     console.error('Error al verificar acceso a banqueo:', error);
     return { canAccess: false, reason: 'No se pudo verificar - intenta de nuevo' };
@@ -517,28 +706,13 @@ export async function getBanqueoQuestions(courseName: string, examId: string = D
     return { exam: examParam(examId), course: courseName, totalQuestions: questions.length, stock: bank.length, questions };
   }
   try {
-    const params = new URLSearchParams({
-      action: 'getBanqueoQuestions',
-      exam: examParam(examId),
-      course: courseName
-    });
-
-    const url = `${API_BASE_URL}?${params.toString()}`;
-    const response = await fetchWithTimeout(url, 20000);
-
-    if (!response.ok) {
-      throw new Error(`Error HTTP: ${response.status}`);
-    }
-
-    const result = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || 'Error al obtener preguntas');
-    }
-
-    return result.data as BanqueoQuestionsResult;
+    const exam = examParam(examId);
+    return await withToken(banqueoToken, refreshBanqueoToken, t => callApi<BanqueoQuestionsResult>(
+      { action: 'getBanqueoQuestions', exam, course: courseName, t }, 30000
+    ));
   } catch (error) {
     console.error('Error al obtener preguntas del banqueo:', error);
+    if (error instanceof ApiError) throw error;
     throw new Error(
       error instanceof Error
         ? error.message
@@ -584,18 +758,9 @@ function esAccionNoValida(msg: unknown): boolean {
   return /acci[oó]n no v[aá]lida/i.test(String(msg || ''));
 }
 
-async function callBanqueo<T>(params: Record<string, string>, timeout = 30000): Promise<T> {
-  const url = `${API_BASE_URL}?${new URLSearchParams(params).toString()}`;
-  const response = await fetchWithTimeout(url, timeout);
-  if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
-  const result = await response.json();
-  if (!result.success) {
-    if (esAccionNoValida(result.error)) throw new BackendViejoError();
-    throw new Error(result.error || 'Error del servidor');
-  }
-  const data = result.data as T & { error?: string };
-  if (data && typeof data === 'object' && data.error) throw new Error(data.error);
-  return data;
+/** Llamada del banqueo con el token de sesión (se renueva solo si venció). */
+function callBanqueo<T>(params: Record<string, string>, timeout = 30000): Promise<T> {
+  return withToken(banqueoToken, refreshBanqueoToken, t => callApi<T>({ ...params, t }, timeout));
 }
 
 const catalogCache = new Map<string, Promise<BanqueoCatalog>>();
@@ -608,7 +773,7 @@ export function getBanqueoCatalog(examId: string = DEFAULT_EXAM_ID): Promise<Ban
   if (!p) {
     p = USE_MOCK
       ? mockDelay(400).then(() => mockBanqueoCatalog(exam))
-      : callBanqueo<BanqueoCatalog>({ action: 'banqueoCatalog', exam }, 60000);
+      : callApi<BanqueoCatalog>({ action: 'banqueoCatalog', exam }, 60000);
     p.catch(() => catalogCache.delete(exam));
     catalogCache.set(exam, p);
   }

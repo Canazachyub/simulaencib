@@ -8,9 +8,10 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import {
-  getBanqueoQuestions, getBanqueoIds, getBanqueoPorIds, BackendViejoError, BANQUEO_LOTE,
+  getBanqueoQuestions, getBanqueoIds, getBanqueoPorIds, BackendViejoError, ApiError, AuthError, BANQUEO_LOTE,
   type BanqueoQuestion, type BanqueoIdItem
 } from '../services/api';
+import { Watermark, watermarkText, noCopyProps } from './Watermark';
 import { SpeakButton, stopSpeaking, stripHtml, FlashcardReview, toCard, readDeck, type StudyCard } from './study';
 import { ArmaBanqueo, type ModoBanqueo } from './ArmaBanqueo';
 import {
@@ -208,6 +209,17 @@ export function BanqueoPractice() {
       if (continuar) await resumeSession(list);
       setLoading(false);
     } catch (err) {
+      if (err instanceof AuthError) {
+        // Sesión vencida y no renovable (p. ej. ya no está confirmado): volver a ingresar
+        navigate('/banqueo/acceso');
+        return;
+      }
+      if (err instanceof ApiError) {
+        // Límite de uso u otro error declarado por el servidor: mostrarlo tal cual
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
       setV2(false);
       setLegacyNotice(err instanceof BackendViejoError
         ? 'Actualiza el servidor para filtros y progreso'
@@ -227,7 +239,8 @@ export function BanqueoPractice() {
         beginSet(result.questions, result.questions.map(q => q.id));
       }
     } catch (err) {
-      setError('Error al cargar las preguntas. Por favor, intenta de nuevo.');
+      if (err instanceof AuthError) { navigate('/banqueo/acceso'); return; }
+      setError(err instanceof ApiError ? err.message : 'Error al cargar las preguntas. Por favor, intenta de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -274,6 +287,7 @@ export function BanqueoPractice() {
       beginSet(got, [...gotIds, ...ids.slice(first.length)]);
       setStarted(true);
     } catch (err) {
+      if (err instanceof AuthError) { navigate('/banqueo/acceso'); return; }
       setStartError(err instanceof Error ? err.message : 'No se pudieron cargar las preguntas.');
     } finally {
       setStarting(false);
@@ -406,6 +420,14 @@ export function BanqueoPractice() {
     setFx({ id: ++fxSeq.current, kind, fly });
   }, []);
   const [cards, setCards] = useState<StudyCard[] | null>(null);
+
+  const wmText = useMemo(() => {
+    try {
+      return watermarkText(sessionStorage.getItem('banqueo_dni'), sessionStorage.getItem('banqueo_email'));
+    } catch {
+      return '';
+    }
+  }, []);
 
   const studentName = useMemo(() => {
     try {
@@ -1134,7 +1156,12 @@ export function BanqueoPractice() {
       )}
 
       {/* ===== Contenido ===== */}
-      <main key={`${mode}-${currentIndex}-${rPos}-${phase === 'explain' ? 'e' : 'q'}`} className="flex-1 max-w-[1200px] w-full mx-auto px-3 sm:px-5 pt-4 pb-32 motion-safe:animate-q-in">
+      <main
+        key={`${mode}-${currentIndex}-${rPos}-${phase === 'explain' ? 'e' : 'q'}`}
+        className="relative no-copy flex-1 max-w-[1200px] w-full mx-auto px-3 sm:px-5 pt-4 pb-32 motion-safe:animate-q-in"
+        {...noCopyProps}
+      >
+        <Watermark text={wmText} color={phase === 'explain' ? '#000000' : '#ffffff'} opacity={phase === 'explain' ? 0.05 : 0.07} />
         {phase === 'explain' ? (
           // ----- Pantalla intermedia: justificación -----
           <div className="max-w-[760px] mx-auto">

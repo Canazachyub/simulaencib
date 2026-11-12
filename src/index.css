@@ -406,3 +406,18 @@
   .fx-particle, .fx-fly, .fx-spark, .fx-vignette, .fx-peek { display: none !important; }
   .fx-draw { animation: none; stroke-dashoffset: 0; }
 }
+
+/* Disuasión de copia en las pantallas de preguntas (no bloquea teclado ni lectores de pantalla) */
+.no-copy {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.no-copy img {
+  -webkit-user-drag: none;
+}
+/* El subrayador del simulacro necesita seleccionar texto */
+.no-copy .allow-select {
+  -webkit-user-select: text;
+  user-select: text;
+}

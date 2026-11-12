@@ -77,7 +77,7 @@ export interface Question {
   questionText: string;
   questionType: string; // "Caso Clínico" o "Problema"
   options: string[];
-  correctAnswer: number; // Índice 0-based de la respuesta correcta
+  correctAnswer: number; // Índice 0-based de la respuesta correcta (-1 = aún no revelada por el servidor)
   timeSeconds: number;
   imageLink: string | null;
   subject: string; // Nombre del curso/área según la configuración del examen
@@ -159,6 +159,12 @@ export interface ExamStore {
   result: ExamResult | null;
   error: string | null;
   startTime: Date | null;
+  /** Intento del simulacro en el servidor (null = backend viejo: se califica en el navegador). */
+  attemptId: string | null;
+  /** true si el servidor ya calificó y guardó el puntaje (Results no debe volver a guardarlo). */
+  scoreSavedByServer: boolean;
+  /** Error al enviar la prueba (el examen sigue abierto para reintentar). */
+  gradeError: string | null;
 
   // Acciones
   setStudent: (student: Student) => void;
@@ -170,7 +176,7 @@ export interface ExamStore {
   nextQuestion: () => void;
   previousQuestion: () => void;
   goToQuestion: (index: number) => void;
-  finishExam: () => void;
+  finishExam: () => Promise<boolean>; // true si hay resultado (calificado)
   resetExam: () => void;
   setError: (error: string) => void;
 }

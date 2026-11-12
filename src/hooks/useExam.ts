@@ -10,7 +10,7 @@ import type {
   ExamResult
 } from '../types';
 import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_META, UPCOMING_EXAMS } from '../types';
-import { getConfig, getQuestions, getExams } from '../services/api';
+import { getConfig, getQuestions, getExams, gradeSimulacro } from '../services/api';
 import { calculateExamResult } from '../utils/calculations';
 
 // ============================================
@@ -120,6 +120,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       selectedExamId: id,
       config: null,
       questions: [],
+      attemptId: null,
       result: null,
       status: 'idle',
       error: null
@@ -137,6 +138,9 @@ export const useExamStore = create<ExamStore>((set, get) => ({
   result: null,
   error: null,
   startTime: null,
+  attemptId: null,
+  scoreSavedByServer: false,
+  gradeError: null,
 
   // Establecer datos del estudiante
   setStudent: (student: Student) => {
@@ -169,12 +173,12 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     set({ status: 'loading', error: null });
 
     try {
-      const questions: Question[] = await getQuestions(examId);
+      const { questions, attemptId } = await getQuestions(examId);
       if (get().selectedExamId !== examId) return;
       if (questions.length === 0) {
         throw new Error('No hay preguntas disponibles para este examen por ahora.');
       }
-      set({ questions, status: 'ready' });
+      set({ questions, attemptId, scoreSavedByServer: false, gradeError: null, status: 'ready' });
     } catch (error) {
       set({
         status: 'error',
@@ -248,11 +252,33 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     }
   },
 
-  // Finalizar el examen y calcular resultados
-  finishExam: () => {
-    const { student, questions, savedAnswers, startTime, config, exams, selectedExamId } = get();
+  // Finalizar el examen: el servidor califica (y guarda el puntaje); luego se arma el resultado
+  finishExam: async () => {
+    const { student, savedAnswers, startTime, config, exams, selectedExamId, attemptId } = get();
+    let { questions } = get();
 
-    if (!student || !startTime) return;
+    if (!student || !startTime) return false;
+
+    let scoreSavedByServer = false;
+    if (attemptId) {
+      set({ gradeError: null });
+      try {
+        const graded = await gradeSimulacro(
+          selectedExamId,
+          attemptId,
+          questions.map(q => savedAnswers.get(q.id) ?? null)
+        );
+        const byId = new Map(graded.results.map(r => [r.id, r]));
+        questions = questions.map(q => {
+          const r = byId.get(q.id);
+          return r ? { ...q, correctAnswer: r.correctAnswer, justification: r.justification } : q;
+        });
+        scoreSavedByServer = graded.saved;
+      } catch (error) {
+        set({ gradeError: error instanceof Error ? error.message : 'No se pudo calificar el examen. Intenta de nuevo.' });
+        return false;
+      }
+    }
 
     // Convertir savedAnswers a Answer[] con evaluación
     const totalTime = Math.floor((new Date().getTime() - startTime.getTime()) / 1000);
@@ -282,7 +308,8 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       examConfig
     );
 
-    set({ status: 'completed', result, answers: evaluatedAnswers });
+    set({ status: 'completed', result, answers: evaluatedAnswers, questions, scoreSavedByServer, gradeError: null });
+    return true;
   },
 
   // Reiniciar el examen
@@ -296,7 +323,10 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       savedAnswers: new Map(),
       result: null,
       error: null,
-      startTime: null
+      startTime: null,
+      attemptId: null,
+      scoreSavedByServer: false,
+      gradeError: null
     });
   },
 
