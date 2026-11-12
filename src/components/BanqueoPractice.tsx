@@ -9,6 +9,7 @@ import {
 import clsx from 'clsx';
 import {
   getBanqueoQuestions, getBanqueoIds, getBanqueoPorIds, BackendViejoError, ApiError, AuthError, BANQUEO_LOTE,
+  hasBanqueoSession, clearCuentaSession,
   type BanqueoQuestion, type BanqueoIdItem
 } from '../services/api';
 import { Watermark, watermarkText, noCopyProps } from './Watermark';
@@ -174,9 +175,7 @@ export function BanqueoPractice() {
 
   // Check access and load questions
   useEffect(() => {
-    const dni = sessionStorage.getItem('banqueo_dni');
-    const email = sessionStorage.getItem('banqueo_email');
-    if (!dni || !email) {
+    if (!hasBanqueoSession()) {
       navigate('/banqueo/acceso');
       return;
     }
@@ -210,7 +209,8 @@ export function BanqueoPractice() {
       setLoading(false);
     } catch (err) {
       if (err instanceof AuthError) {
-        // Sesión vencida y no renovable (p. ej. ya no está confirmado): volver a ingresar
+        // Sesión vencida (o examen fuera de tu plan): volver a entrar con la cuenta
+        if (err.code !== 'FORBIDDEN') clearCuentaSession();
         navigate('/banqueo/acceso');
         return;
       }
@@ -239,7 +239,7 @@ export function BanqueoPractice() {
         beginSet(result.questions, result.questions.map(q => q.id));
       }
     } catch (err) {
-      if (err instanceof AuthError) { navigate('/banqueo/acceso'); return; }
+      if (err instanceof AuthError) { if (err.code !== 'FORBIDDEN') clearCuentaSession(); navigate('/banqueo/acceso'); return; }
       setError(err instanceof ApiError ? err.message : 'Error al cargar las preguntas. Por favor, intenta de nuevo.');
     } finally {
       setLoading(false);
@@ -287,7 +287,7 @@ export function BanqueoPractice() {
       beginSet(got, [...gotIds, ...ids.slice(first.length)]);
       setStarted(true);
     } catch (err) {
-      if (err instanceof AuthError) { navigate('/banqueo/acceso'); return; }
+      if (err instanceof AuthError) { if (err.code !== 'FORBIDDEN') clearCuentaSession(); navigate('/banqueo/acceso'); return; }
       setStartError(err instanceof Error ? err.message : 'No se pudieron cargar las preguntas.');
     } finally {
       setStarting(false);

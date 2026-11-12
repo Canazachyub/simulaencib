@@ -36,19 +36,29 @@
  *   ?action=banqueoPorIds&exam=X&course=Y&ids=id1,id2,...   (máx. 30)
  *     → { exam, course, totalQuestions, questions:[Question...], missing:[ids no encontrados] }  (en el orden pedido)
  *
- * SEGURIDAD (v3): todo contenido exige un token de sesión en el parámetro "t" (se sigue usando GET por CORS).
- *   checkAccess / checkBanqueoAccess → si canAccess, devuelven además { token, tokenExpiresIn }.
- *   Token "sim": questions, gradeSimulacro, register, saveScore (obsoleto), getHistory.
- *   Token "banqueo": getBanqueoQuestions, banqueoIds, banqueoPorIds, register, getHistory.
+ * SEGURIDAD (v4): todo contenido exige un token de sesión en el parámetro "t" (se sigue usando GET por CORS).
+ *   CUENTA SINAPSIS (banqueo + simulacros pagados): el alumno entra con su cuenta de sinapsisedu.com.
+ *     El portal le da un ticket de un solo uso (5 min) y lo manda a /acceso?ticket=...; el frontend llama
+ *     ?action=loginTicket&ticket=T → este backend lo canjea con el de SINAPSIS (verificarTicketBanqueo,
+ *     servidor a servidor) → { token, exams:[...], nombre, correo, dni, fin:{exam:'YYYY-MM-DD'}, tokenExpiresIn }.
+ *     Token "cuenta" (6 h, se renueva con cada uso): vale como "sim" y como "banqueo", solo para sus exams.
+ *     Identidad para cuotas/historial: d = 'U:' + id_usuario (dni/correo/nombre van para la marca de agua).
+ *   checkAccess → SOLO el primer simulacro gratis por DNI y examen (la hoja "confirmado" ya no da nada).
+ *   checkBanqueoAccess → siempre canAccess:false ("Entra con tu cuenta de sinapsisedu.com").
+ *   Token "sim" (gratis): questions (1 vez), gradeSimulacro (SIN correctAnswer ni justification), register.
+ *   Token "cuenta": questions, gradeSimulacro, getHistory, getBanqueoQuestions, banqueoIds, banqueoPorIds.
  *   Públicas: exams, config, banqueoCatalog, test.
  *   El DNI SIEMPRE sale del token (los parámetros dni/email se ignoran salvo en checkAccess*).
  *   ?action=questions&exam=X&t=TOKEN
  *     → { exam, attemptId, expiresInSeconds, questions:[Question SIN correctAnswer ni justification] }
  *   ?action=gradeSimulacro&exam=X&t=TOKEN&attemptId=A&answers=0-21...   (1 carácter por pregunta, '-' = en blanco)
  *     → { exam, attemptId, correctAnswers, totalQuestions, rawScore, maxPoints, vigesimalScore, scaleMax, passing,
- *         saved, results:[{id, selected, correctAnswer, justification}] }   (idempotente; guarda el puntaje una vez)
+ *         saved, free, courses:[{name, correct, total}],
+ *         results:[{id, selected, correctAnswer, justification}] }   (pagado)
+ *         results:[{id, selected, correct}]                            (gratis: sin clave de respuestas)
+ *     (idempotente; guarda el puntaje una vez)
  *   Errores: { success:false, error:"mensaje en español", code } con code ∈ AUTH_REQUIRED, AUTH_EXPIRED,
- *     FORBIDDEN, TOKEN_USED, QUOTA, ATTEMPT_NOT_FOUND, BUSY, BAD_REQUEST, BAD_ACTION, ERROR.
+ *     FORBIDDEN, TOKEN_USED, QUOTA, ATTEMPT_NOT_FOUND, BUSY, BAD_REQUEST, BAD_ACTION, TICKET_INVALID, ERROR.
  *   Cuotas y vencimientos: constantes LIMITS / *_TTL_SECONDS más abajo. Para desbloquear a un alumno:
  *     resetQuotasForDni('DNI') desde el editor. Prueba: testSecurityFlow().
  *   Contadores diarios en Propiedades del script (claves "d:AAAAMMDD:..."; se purgan solos cada día).
@@ -111,23 +121,30 @@ const COURSE_ORDER = [
 
 const CONFIG_CACHE_SECONDS = 600;
 
+// Backend de sinapsisedu.com (Apps Script): canjea los tickets del portal (verificarTicketBanqueo).
+const SINAPSIS_API_URL = 'https://script.google.com/macros/s/AKfycby6vGh6slmvosiyi0ZDtjIACS64a21Ql8kC4C7HH1h1OZ_LctRFat-K0ud3AgdiF43PIA/exec';
+const SINAPSIS_LOGIN_URL = 'https://sinapsisedu.com/#/login?next=banqueo';
+const RE_TICKET = /^[A-Za-z0-9]{48}$/;
+
 // ============================================
 // SEGURIDAD — tokens y cuotas (ajustar aquí)
 // ============================================
-const TOKEN_TTL_SECONDS = 3 * 60 * 60;      // token del banqueo: 3 h, se renueva con cada uso
+const TOKEN_TTL_SECONDS = 3 * 60 * 60;      // token del banqueo (legado): 3 h, se renueva con cada uso
 const SIM_TOKEN_TTL_SECONDS = 6 * 60 * 60;  // token del simulacro: 6 h (el RM dura 4 h; 6 h es el máximo de CacheService)
+const CUENTA_TOKEN_TTL_SECONDS = 6 * 60 * 60; // token de la cuenta SINAPSIS (banqueo + simulacros): 6 h, se renueva con cada uso
 const ATTEMPT_TTL_SECONDS = 6 * 60 * 60;    // clave de respuestas de un intento de simulacro
 const QUOTA_TZ = 'America/Lima';            // "día" y "hora" de las cuotas
 const LIMITS = {
   ACCESOS_HORA: 40,              // checkAccess + checkBanqueoAccess por DNI y hora (el formulario verifica mientras se escribe)
   SIM_GRATIS_DIA: 2,             // simulacros gratis generados por DNI, examen y día (1 + 1 reintento si falla la red)
   SIM_GRATIS_GLOBAL_HORA: 300,   // simulacros gratis de TODO el sitio por hora (frena la creación masiva de DNI falsos)
-  SIM_HORA: 3,                   // simulacros (action=questions) por DNI confirmado y hora
+  SIM_HORA: 3,                   // simulacros pagados (action=questions) por cuenta y hora
   SIM_DIA: 8,                    // ... y por día
   BANQUEO_IDS_HORA: 60,          // llamadas a banqueoIds por DNI y hora
   BANQUEO_PREGUNTAS_HORA: 400,   // preguntas NUEVAS del banqueo (banqueoPorIds + getBanqueoQuestions) por DNI y hora
   BANQUEO_PREGUNTAS_DIA: 1500,   // ... y por día
-  HISTORIAL_HORA: 60             // getHistory por DNI y hora
+  HISTORIAL_HORA: 60,            // getHistory por DNI y hora
+  LOGIN_TICKET_HORA: 600         // canjes de ticket (loginTicket) de TODO el sitio por hora
 };
 
 // ============================================
@@ -162,8 +179,11 @@ function doGet(e) {
         result = checkUserAccess(cleanDni_(p.dni), p.email || '', examId);
         break;
       case 'checkBanqueoAccess':
-        if (!p.dni) throw apiError_('BAD_REQUEST', 'Parámetro "dni" requerido');
-        result = checkBanqueoAccess(cleanDni_(p.dni), p.email || '');
+        // Obsoleto: el banqueo se abre con la cuenta de sinapsisedu.com (loginTicket).
+        result = checkBanqueoAccess();
+        break;
+      case 'loginTicket':
+        result = loginTicket_(p.ticket);
         break;
 
       // ----- Simulacro (token scope "sim") -----
@@ -175,11 +195,15 @@ function doGet(e) {
         break;
       case 'register':
         info = requireToken_(p.t, ['sim', 'banqueo'], null);
-        result = registerUser(info.d, p.fullName || '', info.e, p.phone || '', p.university || '');
+        // La cuenta SINAPSIS ya tiene sus datos en sinapsisedu.com: no se registra en "usuarios"
+        // (su identidad 'U:…' ensuciaría la detección de DNI/correo duplicados del simulacro gratis).
+        result = info.s === 'cuenta'
+          ? { registered: true, message: 'Cuenta SINAPSIS', existing: true }
+          : registerUser(info.d, p.fullName || '', info.e, p.phone || '', p.university || '');
         break;
       case 'saveScore':
         // Obsoleto: gradeSimulacro ya guarda el puntaje. Se mantiene por compatibilidad, con el DNI del token.
-        info = requireToken_(p.t, ['sim'], examId);
+        info = requireToken_(p.t, ['cuenta'], examId);
         result = saveUserScore(
           info.d,
           parseInt(p.correctAnswers) || 0,
@@ -222,7 +246,7 @@ function doGet(e) {
         break;
       }
       default:
-        return createErrorResponse('Acción no válida. Use: exams, config, questions, gradeSimulacro, register, saveScore, getHistory, checkAccess, checkBanqueoAccess, getBanqueoQuestions, banqueoCatalog, banqueoIds, banqueoPorIds o test', 'BAD_ACTION');
+        return createErrorResponse('Acción no válida. Use: exams, config, questions, gradeSimulacro, register, saveScore, getHistory, checkAccess, checkBanqueoAccess, loginTicket, getBanqueoQuestions, banqueoCatalog, banqueoIds, banqueoPorIds o test', 'BAD_ACTION');
     }
     return createSuccessResponse(result);
   } catch (error) {
@@ -270,11 +294,14 @@ function newSecret_() {
 }
 
 function tokenTtl_(info) {
+  if (info.s === 'cuenta') return CUENTA_TOKEN_TTL_SECONDS;
   return info.s === 'sim' ? SIM_TOKEN_TTL_SECONDS : TOKEN_TTL_SECONDS;
 }
 
 /**
- * info = { d: dni, e: email, s: 'sim'|'banqueo', x: examId|'*', f: primer intento gratis, n: llamadas a questions restantes (solo gratis) }
+ * info = { d: identidad (DNI, o 'U:'+id_usuario en la cuenta), e: email, s: 'sim'|'banqueo'|'cuenta',
+ *          x: examId | '*' | [examIds] (cuenta), f: primer intento gratis, n: llamadas a questions restantes (solo gratis),
+ *          dni / nm: DNI y nombre para la marca de agua (solo cuenta) }
  */
 function issueToken_(info) {
   const t = newSecret_();
@@ -296,15 +323,82 @@ function readToken_(t) {
   return info && info.exp > Date.now() ? info : null;
 }
 
-/** Valida el token (parámetro "t") y refresca su vencimiento. examId null = cualquier examen. */
+/** ¿El token permite este examen? x = '*' | examId | [examIds]. */
+function tokenAllowsExam_(info, examId) {
+  if (!examId || info.x === '*') return true;
+  if (Array.isArray(info.x)) return info.x.indexOf(examId) !== -1;
+  return info.x === examId;
+}
+
+/**
+ * Valida el token (parámetro "t") y refresca su vencimiento. examId null = cualquier examen.
+ * El token "cuenta" (cuenta SINAPSIS) vale donde se acepte "sim" o "banqueo".
+ */
 function requireToken_(t, scopes, examId) {
-  if (!t) throw apiError_('AUTH_REQUIRED', 'Sesión requerida: vuelve a ingresar con tu DNI y correo.');
+  if (!t) throw apiError_('AUTH_REQUIRED', 'Sesión requerida: vuelve a entrar con tu cuenta de sinapsisedu.com.');
   const info = readToken_(t);
-  if (!info) throw apiError_('AUTH_EXPIRED', 'Tu sesión expiró: vuelve a ingresar con tu DNI y correo.');
-  if (scopes.indexOf(info.s) === -1) throw apiError_('FORBIDDEN', 'Tu sesión no da acceso a esta sección.');
-  if (examId && info.x !== '*' && info.x !== examId) throw apiError_('FORBIDDEN', 'Tu sesión es de otro examen: vuelve a ingresar tus datos.');
+  if (!info) throw apiError_('AUTH_EXPIRED', 'Tu sesión expiró: vuelve a entrar con tu cuenta de sinapsisedu.com.');
+  // Tokens "banqueo" del acceso viejo por DNI + correo: ya no valen (el banqueo es solo con la cuenta).
+  if (info.s === 'banqueo') throw apiError_('AUTH_EXPIRED', 'Ahora el banqueo se abre con tu cuenta de sinapsisedu.com.');
+  const scopeOk = scopes.indexOf(info.s) !== -1 ||
+    (info.s === 'cuenta' && (scopes.indexOf('sim') !== -1 || scopes.indexOf('banqueo') !== -1));
+  if (!scopeOk) throw apiError_('FORBIDDEN', 'Tu sesión no da acceso a esta sección.');
+  if (!tokenAllowsExam_(info, examId)) {
+    throw apiError_('FORBIDDEN', info.s === 'cuenta'
+      ? 'Tu cuenta no tiene un acceso activo a este examen.'
+      : 'Tu sesión es de otro examen: vuelve a ingresar tus datos.');
+  }
   saveToken_(t, info);
   return info;
+}
+
+// ----- Cuenta SINAPSIS: canje del ticket de un solo uso -----
+
+/** Pregunta al backend de sinapsisedu.com por el ticket (y lo consume). Devuelve el envelope {ok,data,error}. */
+function verificarTicketSinapsis_(ticket) {
+  const resp = UrlFetchApp.fetch(SINAPSIS_API_URL, {
+    method: 'post',
+    contentType: 'text/plain',
+    payload: JSON.stringify({ action: 'verificarTicketBanqueo', ticket: ticket }),
+    muteHttpExceptions: true,
+    followRedirects: true
+  });
+  try {
+    return JSON.parse(resp.getContentText());
+  } catch (e) {
+    throw apiError_('ERROR', 'No se pudo verificar tu acceso con sinapsisedu.com. Intenta de nuevo.');
+  }
+}
+
+/**
+ * Canjea el ticket del portal por un token "cuenta" (banqueo + simulacros pagados de sus exámenes).
+ * verify (opcional, para pruebas) reemplaza la llamada HTTP a sinapsisedu.com.
+ */
+function loginTicket_(ticket, verify) {
+  ticket = String(ticket || '');
+  if (!RE_TICKET.test(ticket)) throw apiError_('TICKET_INVALID', 'Enlace de acceso inválido o vencido. Vuelve a entrar desde tu portal.');
+  withLock_(function () { consumeQuota_('lticket', 'all', 1, LIMITS.LOGIN_TICKET_HORA, 0, 'accesos al banqueo del sitio'); });
+  const env = (verify || verificarTicketSinapsis_)(ticket);
+  if (!env || env.ok !== true || !env.data) {
+    throw apiError_('TICKET_INVALID', 'Enlace de acceso inválido o vencido (dura 5 minutos y sirve una sola vez). Vuelve a entrar desde tu portal.');
+  }
+  const u = env.data;
+  const idUsuario = String(u.id_usuario || '').trim();
+  const exams = (Array.isArray(u.exams) ? u.exams : [])
+    .map(function (x) { return String(x).toLowerCase(); })
+    .filter(function (x, i, arr) { return EXAMS.hasOwnProperty(x) && arr.indexOf(x) === i; });
+  if (!idUsuario || !exams.length) throw apiError_('FORBIDDEN', 'Tu cuenta no tiene un acceso activo al banqueo.');
+
+  const fin = {};
+  exams.forEach(function (x) { fin[x] = u.fin && u.fin[x] ? String(u.fin[x]) : ''; });
+  const correo = String(u.correo || '').toLowerCase().trim();
+  const nombre = String(u.nombre || '').trim();
+  const dni = String(u.dni || '').trim();
+  const token = issueToken_({ d: 'U:' + idUsuario, e: correo, dni: dni, nm: nombre, s: 'cuenta', x: exams });
+  return {
+    token: token, tokenExpiresIn: CUENTA_TOKEN_TTL_SECONDS,
+    exams: exams, nombre: nombre, correo: correo, dni: dni, fin: fin
+  };
 }
 
 function hourBucket_() { return Utilities.formatDate(new Date(), QUOTA_TZ, 'yyyyMMddHH'); }
@@ -384,8 +478,12 @@ function stripAnswers_(q) {
 
 function getSimulacro_(t, examId) {
   const info = requireToken_(t, ['sim'], examId);
+  // Simulacros pagados: solo con la cuenta SINAPSIS. Un token "sim" solo sirve para el intento gratis.
+  if (info.s !== 'cuenta' && !info.f) {
+    throw apiError_('FORBIDDEN', 'Para más simulacros, entra con tu cuenta de sinapsisedu.com.');
+  }
   withLock_(function () {
-    if (info.f) {
+    if (info.s !== 'cuenta') {
       const cur = readToken_(t);
       if (!cur || !(cur.n > 0)) {
         throw apiError_('TOKEN_USED', 'Esta sesión ya generó tu simulacro gratuito. Vuelve a ingresar tus datos para reintentar.');
@@ -402,13 +500,16 @@ function getSimulacro_(t, examId) {
   const full = getQuestions(examId);
   const attemptId = newSecret_();
   const att = {
-    d: info.d, x: examId, f: !!info.f, c: Date.now(),
-    q: full.map(function (q) { return [q.id, q.correctAnswer, q.points]; })
+    d: info.d, x: examId, f: info.s !== 'cuenta', c: Date.now(),
+    q: full.map(function (q) { return [q.id, q.correctAnswer, q.points, q.subject || '']; })
   };
-  const justifs = full.map(function (q) { return q.justification || null; });
   const cache = CacheService.getScriptCache();
   cache.put('attk:' + attemptId, JSON.stringify(att), ATTEMPT_TTL_SECONDS);
-  cachePutChunked_(cache, 'attj:' + attemptId, JSON.stringify(justifs), ATTEMPT_TTL_SECONDS);
+  // El intento gratis nunca devuelve justificaciones: no se guardan.
+  if (!att.f) {
+    const justifs = full.map(function (q) { return q.justification || null; });
+    cachePutChunked_(cache, 'attj:' + attemptId, JSON.stringify(justifs), ATTEMPT_TTL_SECONDS);
+  }
   return {
     exam: examId,
     attemptId: attemptId,
@@ -429,6 +530,53 @@ function reloadJustifications_(examId, ids) {
     if (wanted.hasOwnProperty(id) && wanted[id] === null) wanted[id] = safeCell(q.data, q.cols.justification) || '';
   });
   return ids.map(function (id) { return wanted[String(id).replace(/-\d+$/, '')] || null; });
+}
+
+/**
+ * Calificación pura (sin hojas ni caché). att = intento guardado; justifs = array (pagado) o null (gratis).
+ * Intento GRATIS (att.f): nota, desglose por curso y acierto por pregunta, SIN correctAnswer ni justification.
+ */
+function buildGradeResult_(att, answers, examId, attemptId, justifs) {
+  const ans = String(answers || '');
+  const exam = EXAMS[examId];
+  const free = !!att.f;
+  let correct = 0, raw2 = 0, max = 0;
+  const courses = [];
+  const courseIdx = {};
+  const graded = att.q.map(function (row, i) {
+    const ch = ans.charAt(i);
+    const sel = /^[0-9]$/.test(ch) ? parseInt(ch, 10) : null;
+    const pts = Number(row[2]) > 0 ? Number(row[2]) : 1;
+    const ok = sel !== null && sel === row[1];
+    max += pts;
+    if (ok) { correct++; raw2 += pts; }
+    const name = String(row[3] || '');
+    if (!courseIdx.hasOwnProperty(name)) { courseIdx[name] = courses.length; courses.push({ name: name, correct: 0, total: 0 }); }
+    const c = courses[courseIdx[name]];
+    c.total++;
+    if (ok) c.correct++;
+    return { sel: sel, ok: ok };
+  });
+  const round2 = function (v) { return Math.round(v * 100) / 100; };
+  const scaleMax = exam.scaleMax > 0 ? exam.scaleMax : 20;
+  return {
+    exam: examId,
+    attemptId: attemptId,
+    correctAnswers: correct,
+    totalQuestions: att.q.length,
+    rawScore: round2(raw2),
+    maxPoints: round2(max),
+    vigesimalScore: max > 0 ? round2((raw2 / max) * scaleMax) : 0,
+    scaleMax: scaleMax,
+    passing: exam.passing,
+    saved: true,
+    free: free,
+    courses: courses,
+    results: att.q.map(function (row, i) {
+      if (free) return { id: row[0], selected: graded[i].sel, correct: graded[i].ok };
+      return { id: row[0], selected: graded[i].sel, correctAnswer: row[1], justification: (justifs && justifs[i]) || null };
+    })
+  };
 }
 
 /**
@@ -456,43 +604,14 @@ function gradeSimulacro_(t, attemptId, answers, examId) {
   if (done) return JSON.parse(done);
 
   try {
-    const ans = String(answers || '');
-    const exam = EXAMS[examId];
-    let correct = 0, raw2 = 0, max = 0;
-    const picks = att.q.map(function (row, i) {
-      const ch = ans.charAt(i);
-      const sel = /^[0-9]$/.test(ch) ? parseInt(ch, 10) : null;
-      const pts = Number(row[2]) > 0 ? Number(row[2]) : 1;
-      max += pts;
-      if (sel !== null && sel === row[1]) { correct++; raw2 += pts; }
-      return sel;
-    });
-    const round2 = function (v) { return Math.round(v * 100) / 100; };
-    const scaleMax = exam.scaleMax > 0 ? exam.scaleMax : 20;
-    const nota = max > 0 ? round2((raw2 / max) * scaleMax) : 0;
-
     let justifs = null;
-    const jRaw = cacheGetChunked_(cache, 'attj:' + attemptId);
-    if (jRaw) justifs = JSON.parse(jRaw);
-    else justifs = reloadJustifications_(examId, att.q.map(function (r) { return r[0]; }));
-
-    saveUserScore(att.d, correct, att.q.length, round2(raw2), nota, examId);
-
-    const result = {
-      exam: examId,
-      attemptId: attemptId,
-      correctAnswers: correct,
-      totalQuestions: att.q.length,
-      rawScore: round2(raw2),
-      maxPoints: round2(max),
-      vigesimalScore: nota,
-      scaleMax: scaleMax,
-      passing: exam.passing,
-      saved: true,
-      results: att.q.map(function (row, i) {
-        return { id: row[0], selected: picks[i], correctAnswer: row[1], justification: justifs[i] || null };
-      })
-    };
+    if (!att.f) {
+      const jRaw = cacheGetChunked_(cache, 'attj:' + attemptId);
+      if (jRaw) justifs = JSON.parse(jRaw);
+      else justifs = reloadJustifications_(examId, att.q.map(function (r) { return r[0]; }));
+    }
+    const result = buildGradeResult_(att, answers, examId, attemptId, justifs);
+    saveUserScore(att.d, result.correctAnswers, result.totalQuestions, result.rawScore, result.vigesimalScore, examId);
     cachePutChunked_(cache, 'attr:' + attemptId, JSON.stringify(result), ATTEMPT_TTL_SECONDS);
     return result;
   } finally {
@@ -1051,30 +1170,12 @@ function getUserHistory(dni, examId) {
 }
 
 // ============================================
-// ACCESO — primer simulacro de cada examen gratis; luego solo "confirmado"
+// ACCESO — primer simulacro de cada examen gratis (DNI); lo demás, con la cuenta SINAPSIS
 // ============================================
-function isConfirmed_(ss, dni, emailLower) {
-  let sheet = ss.getSheetByName('confirmado');
-  if (!sheet) {
-    sheet = ss.insertSheet('confirmado');
-    sheet.appendRow(['DNI', 'Nombre', 'Email']);
-    sheet.getRange(1, 1, 1, 3).setFontWeight('bold');
-    return false;
-  }
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    const confDni = String(data[i][0]).trim();
-    const confEmail = String(data[i][2] || '').toLowerCase().trim();
-    const dniMatch = confDni === dni || confDni === String(parseInt(dni));
-    const emailMatch = confEmail === emailLower || (confEmail === '' && emailLower === '');
-    if (dniMatch && emailMatch) return true;
-  }
-  return false;
-}
-
 /**
- * Simulacro. Si concede acceso, agrega { token, tokenExpiresIn }: token scope "sim" atado a DNI + email + examen.
- * Primer intento gratis → el token permite UNA sola llamada a action=questions.
+ * Simulacro GRATIS (solo el primero por DNI y examen). Si concede acceso, agrega { token, tokenExpiresIn }:
+ * token scope "sim" atado a DNI + email + examen, que permite UNA sola llamada a action=questions.
+ * Los demás simulacros se rinden con la cuenta SINAPSIS (loginTicket).
  */
 function checkUserAccess(dni, email, examId) {
   if (!dni) return { canAccess: false, reason: 'DNI requerido', attemptCount: 0 };
@@ -1083,8 +1184,7 @@ function checkUserAccess(dni, email, examId) {
   const r = checkUserAccessRaw_(dni, email, examId);
   if (r.canAccess) {
     r.token = issueToken_({
-      d: dni, e: (email || '').toLowerCase().trim(), s: 'sim', x: examId,
-      f: !!r.isFirstAttempt, n: r.isFirstAttempt ? 1 : -1
+      d: dni, e: (email || '').toLowerCase().trim(), s: 'sim', x: examId, f: true, n: 1
     });
     r.tokenExpiresIn = SIM_TOKEN_TTL_SECONDS;
   }
@@ -1126,24 +1226,15 @@ function checkUserAccessRaw_(dni, email, examId) {
   if (attemptCount === 0) {
     return { canAccess: true, reason: 'Primer simulacro gratuito', attemptCount: 0, isFirstAttempt: true, isFraudAttempt: false };
   }
-  if (isConfirmed_(ss, dni, emailLower)) {
-    return { canAccess: true, reason: 'Usuario confirmado', attemptCount: attemptCount, isFirstAttempt: false, isConfirmed: true, isFraudAttempt: false };
-  }
-  return { canAccess: false, reason: 'Requiere inscripción para más intentos', attemptCount: attemptCount, isFirstAttempt: false, isConfirmed: false, isFraudAttempt: false };
+  // Más intentos: solo con la cuenta de sinapsisedu.com (loginTicket). La hoja "confirmado" ya no da acceso.
+  return { canAccess: false, reason: 'Para más simulacros, entra con tu cuenta de sinapsisedu.com', attemptCount: attemptCount, isFirstAttempt: false, isConfirmed: false, isFraudAttempt: false };
 }
 
-/** Banqueo: solo confirmados. Si concede acceso, agrega { token, tokenExpiresIn } (scope "banqueo", todos los exámenes). */
-function checkBanqueoAccess(dni, email) {
-  if (!dni) return { canAccess: false, reason: 'DNI requerido' };
-  withLock_(function () { consumeQuota_('acc', dni, 1, LIMITS.ACCESOS_HORA, 0, 'verificaciones de acceso'); });
-  const emailLower = (email || '').toLowerCase().trim();
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const ok = isConfirmed_(ss, dni, emailLower);
-  if (!ok) return { canAccess: false, reason: 'El Banqueo es exclusivo para usuarios inscritos', isConfirmed: false };
+/** Obsoleto: el banqueo ya no se abre con DNI + correo, sino con la cuenta de sinapsisedu.com (loginTicket). */
+function checkBanqueoAccess() {
   return {
-    canAccess: true, reason: 'Acceso autorizado al Banqueo', isConfirmed: true,
-    token: issueToken_({ d: dni, e: emailLower, s: 'banqueo', x: '*' }),
-    tokenExpiresIn: TOKEN_TTL_SECONDS
+    canAccess: false, reason: 'Entra con tu cuenta de sinapsisedu.com', isConfirmed: false,
+    loginUrl: SINAPSIS_LOGIN_URL
   };
 }
 
@@ -1202,15 +1293,53 @@ function resetQuotasForDni(dni) {
 
 /** Prueba del flujo seguro sin tocar las hojas (no guarda puntaje): token → banqueoIds → banqueoPorIds → errores. */
 function testSecurityFlow() {
-  const t = issueToken_({ d: 'TEST0000', e: 'test@example.com', s: 'banqueo', x: '*' });
+  const t = issueToken_({ d: 'TEST0000', e: 'test@example.com', s: 'cuenta', x: ['enam'] });
+  const viejo = issueToken_({ d: 'TEST0000', e: 'test@example.com', s: 'banqueo', x: '*' });
+  try { requireToken_(viejo, ['banqueo'], 'enam'); console.log('MAL: token banqueo por DNI aceptado'); } catch (e) { console.log('OK token viejo: ' + e.code); }
   const course = getExamCourses('enam')[0];
   const ids = getBanqueoIds('enam', course.name, {}).items.slice(0, 3).map(function (i) { return i.id; });
   consumeBanqueo_('TEST0000', ids);
-  console.log('Token banqueo OK, ' + ids.length + ' preguntas cobradas a la cuota');
-  try { requireToken_(t, ['sim'], 'enam'); console.log('MAL: scope no validado'); } catch (e) { console.log('OK scope: ' + e.code); }
+  requireToken_(t, ['banqueo'], 'enam');
+  console.log('Token cuenta OK, ' + ids.length + ' preguntas cobradas a la cuota');
+  const tsim = issueToken_({ d: 'TEST0000', e: 'test@example.com', s: 'sim', x: 'enam', f: true, n: 1 });
+  try { requireToken_(tsim, ['banqueo'], 'enam'); console.log('MAL: scope no validado'); } catch (e) { console.log('OK scope: ' + e.code); }
   try { requireToken_('', ['banqueo'], 'enam'); console.log('MAL: token vacío aceptado'); } catch (e) { console.log('OK vacío: ' + e.code); }
   try { requireToken_(newSecret_(), ['banqueo'], 'enam'); console.log('MAL: token falso aceptado'); } catch (e) { console.log('OK falso: ' + e.code); }
   const q = stripAnswers_(formatQuestion(readBankRows(SpreadsheetApp.openById(EXAMS.enam.spreadsheetId), course.sheets)[0], { number: 1, subject: course.name, points: 1 }));
   console.log('Simulacro sin respuesta: ' + (q.correctAnswer === undefined && q.justification === undefined ? 'OK' : 'MAL'));
+
+  // loginTicket: formato inválido (no llama a sinapsisedu.com), ticket bien formado pero rechazado (stub), ticket válido (stub)
+  const llamadas = [];
+  const rechaza = function (tk) { llamadas.push(tk); return { ok: false, error: 'Ticket inválido o vencido' }; };
+  try { loginTicket_('falso', rechaza); console.log('MAL: ticket con formato inválido aceptado'); } catch (e) { console.log('OK ticket formato: ' + e.code + (llamadas.length ? ' (MAL: llamó al backend)' : '')); }
+  const bogus = (newSecret_() + 'ABCDEFGHIJKLMNOP').slice(0, 48);
+  try { loginTicket_(bogus, rechaza); console.log('MAL: ticket falso aceptado'); } catch (e) { console.log('OK ticket falso: ' + e.code + ' (backend consultado ' + llamadas.length + ' vez)'); }
+  try {
+    loginTicket_(bogus, function () { return { ok: true, data: { id_usuario: 'TEST', exams: ['otro'] } }; });
+    console.log('MAL: cuenta sin exámenes válidos aceptada');
+  } catch (e) { console.log('OK cuenta sin exámenes: ' + e.code); }
+  const lt = loginTicket_(bogus, function () {
+    return { ok: true, data: { id_usuario: 'TEST', correo: 'Test@Example.com', nombre: 'Test', dni: '00000000', exams: ['enam', 'otro'], fin: { enam: '2099-01-01' } } };
+  });
+  console.log('loginTicket stub: exams=' + JSON.stringify(lt.exams) + (lt.exams.join() === 'enam' ? ' OK' : ' MAL'));
+  try { requireToken_(lt.token, ['banqueo'], 'enam'); requireToken_(lt.token, ['sim'], 'enam'); console.log('OK cuenta vale para banqueo y simulacro de enam'); } catch (e) { console.log('MAL cuenta enam: ' + e.code); }
+  try { requireToken_(lt.token, ['banqueo'], 'rm'); console.log('MAL: cuenta abrió un examen que no compró'); } catch (e) { console.log('OK otro examen: ' + e.code); }
+  const ti = readToken_(lt.token);
+  console.log('Identidad de la cuenta: ' + ti.d + (ti.d === 'U:TEST' ? ' OK' : ' MAL'));
+  CacheService.getScriptCache().remove('tok:' + lt.token);
+
+  // Checks de DNI + correo ya no abren el banqueo
+  console.log('checkBanqueoAccess sin acceso: ' + (checkBanqueoAccess().canAccess === false ? 'OK' : 'MAL'));
+
+  // Calificación gratis: nota y desglose por curso, sin clave de respuestas (no guarda puntaje)
+  const att = { d: 'TEST0000', x: 'enam', f: true, q: [['a', 1, 1, 'Cardio'], ['b', 2, 1, 'Cardio'], ['c', 0, 2, 'Pediatría']] };
+  const g = buildGradeResult_(att, '12-', 'enam', 'x', null);
+  const sinClave = g.results.every(function (r) { return r.correctAnswer === undefined && r.justification === undefined && typeof r.correct === 'boolean'; });
+  console.log('Gratis sin clave: ' + (sinClave && g.free ? 'OK' : 'MAL') + ' · ' + g.correctAnswers + '/' + g.totalQuestions +
+    ' · cursos ' + JSON.stringify(g.courses));
+  const gp = buildGradeResult_({ d: 'U:TEST', x: 'enam', f: false, q: att.q }, '12-', 'enam', 'x', ['j1', 'j2', null]);
+  console.log('Pagado con clave: ' + (gp.results[0].correctAnswer === 1 && gp.results[0].justification === 'j1' && !gp.free ? 'OK' : 'MAL'));
+
+  CacheService.getScriptCache().removeAll(['tok:' + t, 'tok:' + viejo, 'tok:' + tsim]);
   resetQuotasForDni('TEST0000');
 }

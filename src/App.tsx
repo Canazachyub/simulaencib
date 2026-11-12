@@ -9,6 +9,7 @@ import { BanqueoLanding } from './components/BanqueoLanding';
 import { BanqueoAccess } from './components/BanqueoAccess';
 import { BanqueoCourseSelection } from './components/BanqueoCourseSelection';
 import { BanqueoPractice } from './components/BanqueoPractice';
+import { CuentaAcceso } from './components/CuentaAcceso';
 
 const MARCA = 'Simulacros SINAPSIS';
 
@@ -20,6 +21,7 @@ const TITULOS: Array<[RegExp, string]> = [
   [/^\/examen/, 'Simulacro en curso'],
   [/^\/resultados/, 'Tus resultados'],
   [/^\/banqueo\/acceso/, 'Acceso al banqueo'],
+  [/^\/acceso/, 'Entrando con tu cuenta'],
   [/^\/banqueo\/cursos/, 'Elige tu curso · Banqueo'],
   [/^\/banqueo\/practica/, 'Práctica · Banqueo'],
   [/^\/banqueo/, 'Banqueo histórico'],
@@ -45,6 +47,9 @@ function App() {
         <Route path="/confirmar" element={<ExamConfirmation />} />
         <Route path="/examen" element={<Quiz />} />
         <Route path="/resultados" element={<Results />} />
+
+        {/* Entrada con la cuenta de sinapsisedu.com (?ticket=...&examen=...) */}
+        <Route path="/acceso" element={<CuentaAcceso />} />
 
         {/* Banqueo Histórico Routes */}
         <Route path="/banqueo" element={<BanqueoLanding />} />

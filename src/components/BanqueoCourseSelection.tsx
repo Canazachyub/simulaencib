@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Activity, Heart, Microscope, Zap, Target, FileText, BookOpen, Loader2, AlertCircle, ChevronRight, Layers
 } from 'lucide-react';
-import { getConfig, getBanqueoCatalog, BackendViejoError, type BanqueoCatalog } from '../services/api';
+import { getConfig, getBanqueoCatalog, BackendViejoError, getCuentaSession, hasBanqueoSession, type BanqueoCatalog } from '../services/api';
 import { leerProgreso, coberturaCurso, sesionPendiente, borrarSesion } from '../utils/progresoBanqueo';
 import { PlayCircle, X as XIcon } from 'lucide-react';
 import { useExamCatalog, useExamStore } from '../hooks/useExam';
@@ -26,8 +26,15 @@ function readBanqueoExam(): string | null {
 
 export function BanqueoCourseSelection() {
   const navigate = useNavigate();
-  const { exams, examsLoaded } = useExamCatalog();
+  const { exams: allExams, examsLoaded } = useExamCatalog();
   const simulacroExamId = useExamStore(state => state.selectedExamId);
+  // Solo los exámenes que incluye el acceso de la cuenta SINAPSIS
+  const cuentaExams = useMemo(() => getCuentaSession()?.exams ?? null, []);
+  const exams = useMemo(() => {
+    if (!cuentaExams) return allExams;
+    const own = allExams.filter(e => cuentaExams.includes(e.id));
+    return own.length ? own : allExams;
+  }, [allExams, cuentaExams]);
 
   const [examId, setExamId] = useState<string>(() => readBanqueoExam() || simulacroExamId);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -38,11 +45,9 @@ export function BanqueoCourseSelection() {
   const [deck, setDeck] = useState<StudyCard[] | null>(null);
   const deckCount = readDeck(examId).length;
 
-  // Check if user has access
+  // Sin sesión de la cuenta SINAPSIS → pantalla de acceso
   useEffect(() => {
-    const dni = sessionStorage.getItem('banqueo_dni');
-    const email = sessionStorage.getItem('banqueo_email');
-    if (!dni || !email) {
+    if (!hasBanqueoSession()) {
       navigate('/banqueo/acceso');
     }
   }, [navigate]);

@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { mascota } from '../utils/imagenes';
 import { useNavigate } from 'react-router-dom';
 import {
-  Trophy, RotateCcw, CheckCircle, XCircle, ChevronLeft, ChevronRight, History, Target
+  Trophy, RotateCcw, CheckCircle, XCircle, ChevronLeft, ChevronRight, History, Target, Lock, LogIn
 } from 'lucide-react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line
@@ -11,7 +11,7 @@ import { useExamStore } from '../hooks/useExam';
 import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES, SITE_NAME } from '../types';
 import { formatTimeReadable, formatDate, indexToLetter, formatVigesimalScore, formatPoints } from '../utils/calculations';
 import { PDFGenerator } from './PDFGenerator';
-import { saveScore, getUserHistory, type UserHistory } from '../services/api';
+import { saveScore, getUserHistory, sinapsisPlataformaUrl, SINAPSIS_LOGIN_BANQUEO_URL, type UserHistory } from '../services/api';
 import { TopBar, TerminalFooter, SectionLabel } from './terminal';
 import { FlashcardReview, Sparkline, toCard, type StudyCard } from './study';
 import clsx from 'clsx';
@@ -28,7 +28,7 @@ function barTone(percentage: number): { bar: string; text: string } {
 
 export function Results() {
   const navigate = useNavigate();
-  const { result, questions, resetExam, scoreSavedByServer } = useExamStore();
+  const { result, questions, resetExam, scoreSavedByServer, answersLocked } = useExamStore();
   const [showReview, setShowReview] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
@@ -165,7 +165,7 @@ export function Results() {
   ];
 
   const tabs: { id: typeof activeTab; label: string }[] = [
-    { id: 'review', label: 'Revisión' },
+    { id: 'review', label: answersLocked ? 'Respuestas' : 'Revisión' },
     { id: 'details', label: 'Detalle' },
     { id: 'history', label: 'Historial' }
   ];
@@ -236,7 +236,7 @@ export function Results() {
               <p className="text-[15px] font-semibold text-ink">{performanceInfo.title}</p>
               <p className="text-sm text-muted mt-1 leading-relaxed">{performanceInfo.message}</p>
               <p className="meta mt-3 truncate">
-                {result.student.fullName} · DNI {result.student.dni}
+                {result.student.fullName}{result.student.dni && <> · DNI {result.student.dni}</>}
                 {universityName && <> · {universityName}</>}
               </p>
             </div>
@@ -283,7 +283,7 @@ export function Results() {
                 <p className="mt-3 text-sm text-muted">Este es tu primer intento registrado. Vuelve a rendirlo para ver tu curva.</p>
               )}
             </div>
-            {(wrongCount + blankCount) > 0 && (
+            {!answersLocked && (wrongCount + blankCount) > 0 && (
               <button
                 type="button"
                 onClick={() => setCards(
@@ -358,8 +358,35 @@ export function Results() {
             ))}
           </div>
 
+          {/* Simulacro gratis: sin clave de respuestas → invitación a desbloquearlas */}
+          {activeTab === 'review' && answersLocked && (
+            <div className="pt-6">
+              <div className="card p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-6">
+                <div className="grid place-items-center w-12 h-12 shrink-0 rounded-control bg-jungle-100 text-jungle-800">
+                  <Lock className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="title-screen text-xl">Desbloquea las respuestas y justificaciones</h3>
+                  <p className="text-sm text-muted mt-2 max-w-[60ch]">
+                    Ya tienes tu nota y tu rendimiento por curso. Con tu plan de {examName} ves la respuesta correcta y la
+                    justificación de cada pregunta, practicas en el banqueo por tema y rindes más simulacros.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 md:w-64 shrink-0">
+                  <a href={sinapsisPlataformaUrl(result.examId)} className="btn-primary w-full">
+                    Ver el plan de {examName}
+                  </a>
+                  <a href={SINAPSIS_LOGIN_BANQUEO_URL} className="btn-secondary w-full">
+                    <LogIn className="w-4 h-4" />
+                    Ya tengo cuenta
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Revisión de preguntas */}
-          {activeTab === 'review' && (
+          {activeTab === 'review' && !answersLocked && (
             <div className="pt-6 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap gap-2">

@@ -167,7 +167,7 @@ export function BanqueoLanding() {
           <div className="max-w-[700px]">
             <Accordion>
               <AccordionItem title="¿Quién puede acceder?">
-                Los alumnos inscritos: entra con tu DNI y el correo con el que te inscribiste.
+                Los alumnos con un plan activo en sinapsisedu.com: entra con el correo y la contraseña de tu cuenta SINAPSIS.
                 ¿Aún no tienes acceso?{' '}
                 <a href={SINAPSIS_URL} className="font-semibold text-jungle-600 underline underline-offset-2 hover:text-jungle-800">
                   Elige tu plataforma en sinapsisedu.com

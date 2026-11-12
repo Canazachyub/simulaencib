@@ -131,12 +131,20 @@ export function ExamConfirmation() {
           <section className="p-6 border-b border-line">
             <SectionLabel>Estudiante</SectionLabel>
             <dl className="mt-3 grid sm:grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[15px]">
-              <dt className="flex items-center gap-2 text-muted"><CreditCard className="w-4 h-4" />DNI</dt>
-              <dd className="num font-semibold text-ink">{student.dni}</dd>
+              {student.dni && (
+                <>
+                  <dt className="flex items-center gap-2 text-muted"><CreditCard className="w-4 h-4" />DNI</dt>
+                  <dd className="num font-semibold text-ink">{student.dni}</dd>
+                </>
+              )}
               <dt className="flex items-center gap-2 text-muted"><User className="w-4 h-4" />Nombre</dt>
               <dd className="font-semibold text-ink">{student.fullName}</dd>
-              <dt className="flex items-center gap-2 text-muted"><GraduationCap className="w-4 h-4" />Universidad</dt>
-              <dd className="font-semibold text-ink">{universityName}</dd>
+              {universityName && (
+                <>
+                  <dt className="flex items-center gap-2 text-muted"><GraduationCap className="w-4 h-4" />Universidad</dt>
+                  <dd className="font-semibold text-ink">{universityName}</dd>
+                </>
+              )}
             </dl>
           </section>
 

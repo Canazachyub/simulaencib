@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, CreditCard, ChevronRight, ChevronLeft, Loader2, AlertCircle, Mail, Phone, GraduationCap, Stethoscope, MessageCircle, Lock, CheckCircle } from 'lucide-react';
-import { useExamStore, useExamCatalog, useSelectedExam } from '../hooks/useExam';
+import { User, CreditCard, ChevronRight, ChevronLeft, Loader2, AlertCircle, Mail, Phone, GraduationCap, Stethoscope, Lock, CheckCircle } from 'lucide-react';
+import { useExamStore, useExamCatalog, useSelectedExam, prepararSimulacroConCuenta } from '../hooks/useExam';
 import { validateDNI, validateName } from '../utils/calculations';
-import { registerUser, checkAccess, AccessCheckResult } from '../services/api';
+import { registerUser, checkAccess, AccessCheckResult, getCuentaSession, SINAPSIS_LOGIN_BANQUEO_URL } from '../services/api';
+import { CuentaBotones } from './CuentaBotones';
 import { UNIVERSITIES_BY_REGION } from '../types';
 import { ExamSelector } from './ExamSelector';
 import { TopBar, FlowSteps } from './terminal';
@@ -23,6 +24,13 @@ export function StudentForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [accessCheck, setAccessCheck] = useState<AccessCheckResult | null>(null);
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
+  // Cuenta SINAPSIS con acceso a este examen → simulacro pagado sin formulario
+  const cuenta = getCuentaSession();
+  const cuentaConExamen = !!cuenta && cuenta.exams.includes(exam.id);
+
+  const empezarConCuenta = () => {
+    if (prepararSimulacroConCuenta(exam.id)) navigate('/confirmar');
+  };
 
   // Verificar acceso cuando el DNI tenga 8 dígitos Y el email sea válido
   useEffect(() => {
@@ -104,7 +112,7 @@ export function StudentForm() {
 
     // Verificar acceso
     if (accessCheck && !accessCheck.canAccess) {
-      newErrors.dni = 'Necesitas inscribirte para dar más exámenes';
+      newErrors.dni = 'Para más simulacros, entra con tu cuenta SINAPSIS';
     }
 
     setErrors(newErrors);
@@ -187,6 +195,51 @@ export function StudentForm() {
 
   const blocked = accessCheck !== null && !accessCheck.canAccess;
 
+  if (cuentaConExamen) {
+    return (
+      <div className="min-h-screen flex flex-col bg-paper">
+        <TopBar>
+          {exams.length > 1 && (
+            <ExamSelector exams={exams} selectedId={exam.id} onSelect={selectExam} />
+          )}
+        </TopBar>
+        <main className="flex-1 w-full max-w-xl mx-auto px-4 py-8 lg:py-12">
+          <div className="flex items-start gap-4 mb-6">
+            <div className="grid place-items-center w-12 h-12 shrink-0 rounded-control bg-jungle-100 text-jungle-800">
+              <Stethoscope className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <p className="meta">{exam.nombre} · Simulacro</p>
+              <h1 className="title-screen text-[26px] md:text-[28px] leading-tight mt-1">Tu simulacro</h1>
+            </div>
+          </div>
+          <div className="mb-6">
+            <FlowSteps current={1} />
+          </div>
+          <div className="card p-6 md:p-8">
+            <p className="text-[15px] text-ink">
+              Entraste con tu cuenta SINAPSIS como <strong>{cuenta!.nombre || cuenta!.correo}</strong>.
+            </p>
+            <p className="text-sm text-muted mt-2">
+              Tu plan incluye los simulacros de {exam.nombre} con respuestas y justificaciones. No necesitas llenar tus datos.
+            </p>
+            <button type="button" onClick={empezarConCuenta} className="btn-primary w-full mt-6">
+              Continuar al examen
+              <ChevronRight className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/banqueo/cursos')}
+              className="btn-secondary w-full mt-2"
+            >
+              Ir al banqueo
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-paper">
       <TopBar>
@@ -266,7 +319,7 @@ export function StudentForm() {
                   ) : (
                     <>
                       <Lock className="w-4 h-4" />
-                      Ya realizaste {accessCheck.attemptCount} intento{accessCheck.attemptCount > 1 ? 's' : ''} - Inscríbete para continuar
+                      Ya realizaste {accessCheck.attemptCount} intento{accessCheck.attemptCount > 1 ? 's' : ''} · Entra con tu cuenta para continuar
                     </>
                   )}
                 </p>
@@ -395,17 +448,10 @@ export function StudentForm() {
                         Ya realizaste tu simulacro gratuito de {exam.nombre}
                       </p>
                       <p className="text-sm text-muted mb-3">
-                        Para acceder a más simulacros de {exam.nombre}, inscríbete por WhatsApp:
+                        Los demás simulacros de {exam.nombre}, con respuestas y justificaciones, son parte de tu plan
+                        en sinapsisedu.com.
                       </p>
-                      <a
-                        href="https://wa.me/51989855026?text=Hola%2C%20quiero%20m%C3%A1s%20simulacros%20de%20SINAPSIS."
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn-secondary py-2 text-sm"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        Solicitar acceso por WhatsApp
-                      </a>
+                      <CuentaBotones compact />
                     </>
                   )}
                 </div>
@@ -417,15 +463,13 @@ export function StudentForm() {
           {!blocked && (
           <div className="mt-6 p-4 rounded-control bg-jungle-50 border border-jungle-100">
             <p className="text-sm text-muted">
-              <strong className="text-jungle-800">Tu primer simulacro de {exam.nombre} es gratis.</strong> Para más
-              intentos, solicita tu inscripción por WhatsApp:{' '}
+              <strong className="text-jungle-800">Tu primer simulacro de {exam.nombre} es gratis.</strong> ¿Ya tienes
+              un plan?{' '}
               <a
-                href="https://wa.me/51989855026?text=Hola%2C%20quiero%20m%C3%A1s%20simulacros%20de%20SINAPSIS."
-                target="_blank"
-                rel="noopener noreferrer"
+                href={SINAPSIS_LOGIN_BANQUEO_URL}
                 className="text-jungle-600 hover:text-jungle-800 font-semibold underline underline-offset-2"
               >
-                Inscríbete aquí
+                Entra con tu cuenta SINAPSIS
               </a>
             </p>
           </div>

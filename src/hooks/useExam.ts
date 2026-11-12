@@ -10,7 +10,7 @@ import type {
   ExamResult
 } from '../types';
 import { DEFAULT_EXAM_ID, ENCIB_FALLBACK_META, UPCOMING_EXAMS } from '../types';
-import { getConfig, getQuestions, getExams, gradeSimulacro } from '../services/api';
+import { getConfig, getQuestions, getExams, gradeSimulacro, getCuentaSession, iniciarSimulacroConCuenta } from '../services/api';
 import { calculateExamResult } from '../utils/calculations';
 
 // ============================================
@@ -140,6 +140,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
   startTime: null,
   attemptId: null,
   scoreSavedByServer: false,
+  answersLocked: false,
   gradeError: null,
 
   // Establecer datos del estudiante
@@ -178,7 +179,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       if (questions.length === 0) {
         throw new Error('No hay preguntas disponibles para este examen por ahora.');
       }
-      set({ questions, attemptId, scoreSavedByServer: false, gradeError: null, status: 'ready' });
+      set({ questions, attemptId, scoreSavedByServer: false, answersLocked: false, gradeError: null, status: 'ready' });
     } catch (error) {
       set({
         status: 'error',
@@ -260,6 +261,9 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     if (!student || !startTime) return false;
 
     let scoreSavedByServer = false;
+    let answersLocked = false;
+    // Simulacro gratis: el servidor dice solo si acertó cada pregunta (sin la respuesta correcta)
+    const correctById = new Map<string, boolean>();
     if (attemptId) {
       set({ gradeError: null });
       try {
@@ -268,10 +272,14 @@ export const useExamStore = create<ExamStore>((set, get) => ({
           attemptId,
           questions.map(q => savedAnswers.get(q.id) ?? null)
         );
+        answersLocked = graded.free === true;
         const byId = new Map(graded.results.map(r => [r.id, r]));
         questions = questions.map(q => {
           const r = byId.get(q.id);
-          return r ? { ...q, correctAnswer: r.correctAnswer, justification: r.justification } : q;
+          if (!r) return q;
+          if (typeof r.correct === 'boolean') correctById.set(q.id, r.correct);
+          if (typeof r.correctAnswer !== 'number') return q;
+          return { ...q, correctAnswer: r.correctAnswer, justification: r.justification ?? null };
         });
         scoreSavedByServer = graded.saved;
       } catch (error) {
@@ -286,7 +294,9 @@ export const useExamStore = create<ExamStore>((set, get) => ({
 
     const evaluatedAnswers: Answer[] = questions.map(question => {
       const selectedOption = savedAnswers.get(question.id) ?? null;
-      const isCorrect = selectedOption !== null && selectedOption === question.correctAnswer;
+      const isCorrect = correctById.has(question.id)
+        ? correctById.get(question.id) === true
+        : selectedOption !== null && selectedOption === question.correctAnswer;
 
       return {
         questionId: question.id,
@@ -308,7 +318,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       examConfig
     );
 
-    set({ status: 'completed', result, answers: evaluatedAnswers, questions, scoreSavedByServer, gradeError: null });
+    set({ status: 'completed', result, answers: evaluatedAnswers, questions, scoreSavedByServer, answersLocked, gradeError: null });
     return true;
   },
 
@@ -326,6 +336,7 @@ export const useExamStore = create<ExamStore>((set, get) => ({
       startTime: null,
       attemptId: null,
       scoreSavedByServer: false,
+      answersLocked: false,
       gradeError: null
     });
   },
@@ -335,6 +346,21 @@ export const useExamStore = create<ExamStore>((set, get) => ({
     set({ status: 'error', error });
   }
 }));
+
+/**
+ * Simulacro PAGADO con la cuenta SINAPSIS: sin formulario de DNI, la identidad sale del token.
+ * Devuelve false si la cuenta no incluye ese examen.
+ */
+export function prepararSimulacroConCuenta(examId: string): boolean {
+  if (!iniciarSimulacroConCuenta(examId)) return false;
+  const c = getCuentaSession();
+  useExamStore.getState().setStudent({
+    dni: c?.dni || '',
+    fullName: (c?.nombre || c?.correo || 'Alumno SINAPSIS').toUpperCase(),
+    university: ''
+  });
+  return true;
+}
 
 // Hooks derivados para facilitar el uso
 export function useCurrentQuestion() {

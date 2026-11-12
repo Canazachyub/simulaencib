@@ -81,10 +81,13 @@ export interface SimSession {
   dni: string;
   email: string;
   exam: string;
+  /** true = simulacro pagado con la cuenta SINAPSIS (token "cuenta"; no se renueva con DNI). */
+  cuenta?: boolean;
 }
 
 const SIM_SESSION_KEY = 'sim_session';
 const BANQUEO_TOKEN_KEY = 'banqueo_token';
+const CUENTA_SESSION_KEY = 'cuenta_session';
 
 function storageGet(key: string): string | null {
   try { return sessionStorage.getItem(key); } catch { return null; }
@@ -113,6 +116,116 @@ function setSimSession(s: SimSession | null) {
   storageSet(SIM_SESSION_KEY, s ? JSON.stringify(s) : null);
 }
 
+// ============================================
+// CUENTA SINAPSIS (banqueo + simulacros pagados)
+// ============================================
+
+/** URL de sinapsisedu.com (con "/" final). */
+export const SINAPSIS_URL = (import.meta.env.VITE_SINAPSIS_URL || 'https://sinapsisedu.com/').replace(/\/?$/, '/');
+/** Login de SINAPSIS que, al entrar, vuelve al banqueo con un ticket. */
+export const SINAPSIS_LOGIN_BANQUEO_URL = `${SINAPSIS_URL}#/login?next=banqueo`;
+/** Planes (sección de plataformas de la landing de sinapsisedu.com). */
+export const SINAPSIS_PLANES_URL = `${SINAPSIS_URL}#/plataformas`;
+export const SINAPSIS_PORTAL_URL = `${SINAPSIS_URL}#/portal`;
+
+/** id de examen del banqueo → slug de la plataforma en sinapsisedu.com */
+const SLUG_POR_EXAMEN: Record<string, string> = { serums: 'encaps' };
+
+/** Página de la plataforma de un examen en sinapsisedu.com (para comprar el acceso). */
+export function sinapsisPlataformaUrl(examId: string): string {
+  const id = examId.toLowerCase();
+  return `${SINAPSIS_URL}#/plataforma/${SLUG_POR_EXAMEN[id] || id}`;
+}
+
+/** Sesión de la cuenta SINAPSIS (canjeada con loginTicket). */
+export interface CuentaSession {
+  token: string;
+  exams: string[];
+  nombre: string;
+  correo: string;
+  dni: string;
+  /** Vencimiento del acceso por examen ('YYYY-MM-DD', '' = sin fecha). */
+  fin: Record<string, string>;
+}
+
+export function getCuentaSession(): CuentaSession | null {
+  try {
+    const s = JSON.parse(storageGet(CUENTA_SESSION_KEY) || 'null') as CuentaSession | null;
+    return s && s.token && Array.isArray(s.exams) ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/** ¿La cuenta da acceso (banqueo y simulacros pagados) a este examen? */
+export function cuentaPermiteExamen(examId: string): boolean {
+  return !!getCuentaSession()?.exams.includes(examId.toLowerCase());
+}
+
+/** ¿Hay sesión del banqueo (cuenta SINAPSIS)? */
+export function hasBanqueoSession(): boolean {
+  return !!storageGet(BANQUEO_TOKEN_KEY);
+}
+
+/** Cierra la sesión de la cuenta (vencida o rechazada por el servidor). */
+export function clearCuentaSession() {
+  storageSet(CUENTA_SESSION_KEY, null);
+  storageSet(BANQUEO_TOKEN_KEY, null);
+  storageSet('banqueo_dni', null);
+  storageSet('banqueo_email', null);
+  if (getSimSession()?.cuenta) setSimSession(null);
+}
+
+function guardarCuenta(s: CuentaSession) {
+  storageSet(CUENTA_SESSION_KEY, JSON.stringify(s));
+  storageSet(BANQUEO_TOKEN_KEY, s.token);
+  // Marca de agua y progreso local del banqueo
+  storageSet('banqueo_dni', s.dni || null);
+  storageSet('banqueo_email', s.correo || null);
+  // Un simulacro gratis previo en esta pestaña no se mezcla con la cuenta
+  const sim = getSimSession();
+  if (sim && !sim.cuenta) setSimSession(null);
+}
+
+/**
+ * Canjea el ticket de un solo uso que da sinapsisedu.com (portal o login ?next=banqueo) por la sesión
+ * de la cuenta: banqueo + simulacros pagados de sus exámenes. Lanza ApiError con el mensaje del servidor.
+ */
+export async function loginTicket(ticket: string): Promise<CuentaSession> {
+  if (USE_MOCK) {
+    await mockDelay(400);
+    const mock: CuentaSession = {
+      token: 'mock', exams: ['encib', 'enam', 'rm', 'serums', 'essalud'], nombre: 'Alumno de prueba',
+      correo: 'alumno@ejemplo.com', dni: '00000000', fin: {}
+    };
+    guardarCuenta(mock);
+    return mock;
+  }
+  const d = await callApi<Partial<CuentaSession> & { token: string }>({ action: 'loginTicket', ticket }, 30000);
+  const s: CuentaSession = {
+    token: d.token,
+    exams: (d.exams || []).map(e => String(e).toLowerCase()),
+    nombre: d.nombre || '',
+    correo: d.correo || '',
+    dni: d.dni || '',
+    fin: d.fin || {}
+  };
+  guardarCuenta(s);
+  return s;
+}
+
+/**
+ * Prepara el simulacro PAGADO con la cuenta: la sesión del simulacro usa el token de la cuenta
+ * (sin formulario de DNI). Devuelve false si la cuenta no tiene ese examen.
+ */
+export function iniciarSimulacroConCuenta(examId: string): boolean {
+  const c = getCuentaSession();
+  const exam = examParam(examId);
+  if (!c || !c.exams.includes(exam)) return false;
+  setSimSession({ token: c.token, dni: c.dni, email: c.correo, exam, cuenta: true });
+  return true;
+}
+
 /** GET a la API. Lanza ApiError/AuthError con el código del servidor, o BackendViejoError. */
 async function callApi<T>(params: Record<string, string>, timeout = REQUEST_TIMEOUT): Promise<T> {
   const url = `${API_BASE_URL}?${new URLSearchParams(params).toString()}`;
@@ -128,21 +241,20 @@ async function callApi<T>(params: Record<string, string>, timeout = REQUEST_TIME
   return data;
 }
 
-/** Vuelve a pedir el token del simulacro con el DNI/correo ya verificados. */
+/** Vuelve a pedir el token del simulacro gratis con el DNI/correo ya verificados (la cuenta no se renueva así). */
 async function refreshSimToken(examId: string): Promise<string | null> {
   const s = getSimSession();
-  if (!s) return null;
+  if (!s || s.cuenta) return null;
   const r = await checkAccess(s.dni, s.email, examId);
   return r.canAccess && r.token ? r.token : null;
 }
 
-/** Vuelve a pedir el token del banqueo con el DNI/correo guardados al ingresar. */
+/**
+ * El token de la cuenta no se renueva desde aquí (se renueva solo con cada uso, 6 h):
+ * si venció, hay que volver a entrar desde sinapsisedu.com.
+ */
 async function refreshBanqueoToken(): Promise<string | null> {
-  const dni = storageGet('banqueo_dni');
-  const email = storageGet('banqueo_email');
-  if (!dni || !email) return null;
-  const r = await checkBanqueoAccess(dni, email);
-  return r.canAccess && r.token ? r.token : null;
+  return null;
 }
 
 /**
@@ -366,8 +478,11 @@ export async function getQuestions(examId: string = DEFAULT_EXAM_ID): Promise<Si
 export interface GradeItem {
   id: string;
   selected: number | null;
-  correctAnswer: number;
-  justification: string | null;
+  /** Solo en simulacros pagados (el gratis no trae la clave de respuestas). */
+  correctAnswer?: number;
+  justification?: string | null;
+  /** Solo en el simulacro gratis: si acertó. */
+  correct?: boolean;
 }
 
 export interface GradeResult {
@@ -381,6 +496,9 @@ export interface GradeResult {
   scaleMax: number;
   passing: number | null;
   saved: boolean;
+  /** true = simulacro gratis: sin respuestas correctas ni justificaciones. */
+  free?: boolean;
+  courses?: { name: string; correct: number; total: number }[];
   results: GradeItem[];
 }
 
@@ -580,9 +698,9 @@ export interface AccessCheckResult {
 }
 
 /**
- * Verifica si un usuario puede dar el examen con detección de fraude
- * - Primer examen: LIBRE
- * - Segundo+: Requiere estar en hoja "confirmado"
+ * Verifica si un usuario puede dar el simulacro GRATIS con detección de fraude
+ * - Primer simulacro de cada examen por DNI: LIBRE
+ * - Más intentos: solo con la cuenta SINAPSIS (loginTicket)
  * - Detecta si el DNI/Email ya fueron usados con datos diferentes
  */
 export async function checkAccess(dni: string, email: string, examId: string = DEFAULT_EXAM_ID): Promise<AccessCheckResult> {
@@ -621,16 +739,8 @@ export async function checkAccess(dni: string, email: string, examId: string = D
 }
 
 // ============================================
-// BANQUEO HISTÓRICO - SOLO USUARIOS CONFIRMADOS
+// BANQUEO HISTÓRICO - CUENTA SINAPSIS (loginTicket)
 // ============================================
-
-export interface BanqueoAccessResult {
-  canAccess: boolean;
-  reason: string;
-  isConfirmed?: boolean;
-  /** Token de sesión del banqueo (servidor nuevo). */
-  token?: string;
-}
 
 export interface BanqueoQuestion {
   id: string;
@@ -659,40 +769,6 @@ export interface BanqueoQuestionsResult {
   totalQuestions: number;
   questions: BanqueoQuestion[];
   error?: string;
-}
-
-/**
- * Verifica si un usuario puede acceder al Banqueo Histórico
- * SOLO usuarios confirmados (NO hay intento gratis)
- */
-export async function checkBanqueoAccess(dni: string, email: string): Promise<BanqueoAccessResult> {
-  try {
-    const params = new URLSearchParams({
-      action: 'checkBanqueoAccess',
-      dni: dni,
-      email: email.toLowerCase().trim()
-    });
-
-    const url = `${API_BASE_URL}?${params.toString()}`;
-    const response = await fetchWithTimeout(url, 20000);
-
-    if (!response.ok) {
-      return { canAccess: false, reason: 'Error de conexión - intenta de nuevo' };
-    }
-
-    const result = await response.json();
-
-    if (!result.success) {
-      return { canAccess: false, reason: result.error || 'Error de verificación' };
-    }
-
-    const data = result.data as BanqueoAccessResult;
-    storageSet(BANQUEO_TOKEN_KEY, data.canAccess && data.token ? data.token : null);
-    return data;
-  } catch (error) {
-    console.error('Error al verificar acceso a banqueo:', error);
-    return { canAccess: false, reason: 'No se pudo verificar - intenta de nuevo' };
-  }
 }
 
 /**

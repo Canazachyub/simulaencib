@@ -163,6 +163,8 @@ export interface ExamStore {
   attemptId: string | null;
   /** true si el servidor ya calificó y guardó el puntaje (Results no debe volver a guardarlo). */
   scoreSavedByServer: boolean;
+  /** true = simulacro gratis: el servidor no dio la clave de respuestas ni las justificaciones. */
+  answersLocked: boolean;
   /** Error al enviar la prueba (el examen sigue abierto para reintentar). */
   gradeError: string | null;
 
