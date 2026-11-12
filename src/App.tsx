@@ -11,7 +11,7 @@ import { BanqueoPractice } from './components/BanqueoPractice';
 
 function App() {
   return (
-    <BrowserRouter basename="/simulaencib">
+    <BrowserRouter>
       <Routes>
         {/* Simulacro Routes */}
         <Route path="/" element={<Landing />} />
